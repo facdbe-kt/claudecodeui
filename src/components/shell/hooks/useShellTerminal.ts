@@ -112,7 +112,6 @@ export function useShellTerminal({
     // the browser yields the gesture and honours preventDefault().
     const touchContainer = terminalContainerRef.current;
     let lastTouchY: number | null = null;
-    let scrollAccumPx = 0;
 
     // [DIAG bug1] on-screen overlay so mobile touch behaviour is visible
     // without remote devtools. Screenshot it on the phone, then remove.
@@ -126,24 +125,19 @@ export function useShellTerminal({
     touchContainer.appendChild(dbg);
     let tsCount = 0;
     let tmCount = 0;
+    const getViewport = () => touchContainer.querySelector<HTMLElement>('.xterm-viewport');
+
     const renderDbg = (extra: string) => {
       const term = terminalRef.current;
-      const viewport = touchContainer.querySelector<HTMLElement>('.xterm-viewport');
-      const ta = getComputedStyle(touchContainer).touchAction;
+      const viewport = getViewport();
+      const ta = viewport ? getComputedStyle(viewport).touchAction : '?';
       const ydisp = term?.buffer.active.viewportY;
       const baseY = term?.buffer.active.baseY;
       dbg.textContent =
         `ts=${tsCount} tm=${tmCount} ta=${ta}\n` +
         `rows=${term?.rows} vpH=${viewport?.clientHeight ?? '?'} ydisp=${ydisp}/${baseY}\n` +
+        `scrollTop=${viewport?.scrollTop ?? '?'} scrollH=${viewport?.scrollHeight ?? '?'}\n` +
         extra;
-    };
-
-    const rowHeightPx = (): number => {
-      const rows = terminalRef.current?.rows || 0;
-      const viewport = touchContainer.querySelector<HTMLElement>('.xterm-viewport');
-      const height = viewport?.clientHeight || touchContainer.clientHeight || 0;
-      // Fall back to ~fontSize * 1.2 line-height when geometry isn't ready yet.
-      return rows > 0 && height > 0 ? height / rows : 17;
     };
 
     const handleTouchStart = (event: TouchEvent) => {
@@ -154,7 +148,6 @@ export function useShellTerminal({
         return;
       }
       lastTouchY = event.touches[0].clientY;
-      scrollAccumPx = 0;
       renderDbg(`start y=${Math.round(lastTouchY)}`);
     };
 
@@ -165,19 +158,25 @@ export function useShellTerminal({
         return;
       }
       const currentY = event.touches[0].clientY;
-      scrollAccumPx += lastTouchY - currentY;
+      const dy = lastTouchY - currentY;
       lastTouchY = currentY;
 
-      const rowPx = rowHeightPx();
-      const lines = Math.trunc(scrollAccumPx / rowPx);
-      if (lines !== 0) {
-        terminalRef.current?.scrollLines(lines);
-        scrollAccumPx -= lines * rowPx;
+      // Drive xterm's own scroll viewport directly. A programmatic scrollTop
+      // change fires the viewport 'scroll' event that xterm listens to and
+      // syncs its render against — this works regardless of touch-action or
+      // the WebGL canvas overlay, unlike relying on scrollLines() alone.
+      const viewport = getViewport();
+      const before = viewport?.scrollTop ?? 0;
+      if (viewport) {
+        viewport.scrollTop = before + dy;
       }
-      // Block native scroll/selection so only our scrollLines() drives motion.
+      // Fallback in case the viewport isn't scrollable for some reason.
+      if (viewport && viewport.scrollTop === before && dy !== 0) {
+        terminalRef.current?.scrollLines(dy > 0 ? 1 : -1);
+      }
       event.preventDefault();
       renderDbg(
-        `move accum=${Math.round(scrollAccumPx)} rowPx=${rowPx.toFixed(1)} lines=${lines} cancelable=${event.cancelable}`,
+        `dy=${dy} top:${Math.round(before)}->${Math.round(viewport?.scrollTop ?? 0)} cancelable=${event.cancelable}`,
       );
     };
 
