@@ -610,12 +610,18 @@
       max-width: calc(100vw - 120px); /* Account for sidebar padding and buttons */
     }
     
-    /* Enable text selection on mobile for terminal */
-    .xterm,
+    /* Terminal: allow vertical swipe-to-scroll through history on mobile.
+       The viewport is xterm's own scroll container; it has neither the
+       .overflow-y-auto class nor [data-scroll-container], so it must opt
+       into pan-y explicitly. Forcing user-select:text here would make a
+       vertical swipe start a text selection instead of scrolling, so the
+       viewport opts out of selection and lets xterm's own pointer-based
+       selection (long-press) handle copying. */
     .xterm .xterm-viewport {
-      -webkit-user-select: text !important;
-      user-select: text !important;
-      -webkit-touch-callout: default !important;
+      touch-action: pan-y !important;
+      -webkit-overflow-scrolling: touch;
+      -webkit-user-select: none !important;
+      user-select: none !important;
     }
     
     /* Fix mobile scrolling */
