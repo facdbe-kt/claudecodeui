@@ -220,6 +220,11 @@ export function handleShellConnection(
           isLoginCommand || forceRestart ? null : ptySessionsMap.get(ptySessionKey);
         if (existingSession) {
           shellProcess = existingSession.pty;
+          // [DIAG bug2] reconnect reuses an existing PTY; note its current size
+          // vs the size the reconnecting client just initialized with.
+          console.log(
+            `[DIAG bug2] reconnect key=${ptySessionKey} pty.cols=${shellProcess.cols} pty.rows=${shellProcess.rows} client.init.cols=${readNumber(data.cols, 80)} client.init.rows=${readNumber(data.rows, 24)} bufferedChunks=${existingSession.buffer.length}`
+          );
           if (existingSession.timeoutId) {
             clearTimeout(existingSession.timeoutId);
           }
@@ -282,6 +287,12 @@ export function handleShellConnection(
             FORCE_COLOR: '3',
           },
         });
+
+        // [DIAG bug2] fresh PTY spawn: records the size the FIRST client
+        // (e.g. a phone) created the session at.
+        console.log(
+          `[DIAG bug2] spawn key=${ptySessionKey} cols=${termCols} rows=${termRows}`
+        );
 
         ptySessionsMap.set(ptySessionKey, {
           pty: shellProcess,
@@ -432,7 +443,12 @@ export function handleShellConnection(
 
       if (data.type === 'resize') {
         if (shellProcess) {
-          shellProcess.resize(readNumber(data.cols, 80), readNumber(data.rows, 24));
+          const rc = readNumber(data.cols, 80);
+          const rr = readNumber(data.rows, 24);
+          // [DIAG bug2] every client-driven resize; reveals whether the
+          // desktop actually pushes a wide size after reconnect.
+          console.log(`[DIAG bug2] resize key=${ptySessionKey} cols=${rc} rows=${rr}`);
+          shellProcess.resize(rc, rr);
         }
       }
     } catch (error) {

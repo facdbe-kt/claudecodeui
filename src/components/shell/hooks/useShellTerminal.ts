@@ -203,6 +203,10 @@ export function useShellTerminal({
       }
 
       currentFitAddon.fit();
+      // [DIAG bug2] container size + cols/rows at initial fit.
+      console.log(
+        `[DIAG bug2] init-fit containerW=${terminalContainerRef.current?.clientWidth} containerH=${terminalContainerRef.current?.clientHeight} cols=${currentTerminal.cols} rows=${currentTerminal.rows}`
+      );
       sendSocketMessage(wsRef.current, {
         type: 'resize',
         cols: currentTerminal.cols,
@@ -232,6 +236,10 @@ export function useShellTerminal({
         }
 
         currentFitAddon.fit();
+        // [DIAG bug2] container size + cols/rows on every resize-observer fit.
+        console.log(
+          `[DIAG bug2] resize-fit containerW=${terminalContainerRef.current?.clientWidth} containerH=${terminalContainerRef.current?.clientHeight} cols=${currentTerminal.cols} rows=${currentTerminal.rows}`
+        );
         sendSocketMessage(wsRef.current, {
           type: 'resize',
           cols: currentTerminal.cols,
