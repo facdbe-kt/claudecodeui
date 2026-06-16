@@ -114,6 +114,30 @@ export function useShellTerminal({
     let lastTouchY: number | null = null;
     let scrollAccumPx = 0;
 
+    // [DIAG bug1] on-screen overlay so mobile touch behaviour is visible
+    // without remote devtools. Screenshot it on the phone, then remove.
+    const dbg = document.createElement('div');
+    dbg.id = 'shell-touch-debug';
+    dbg.style.cssText =
+      'position:absolute;top:4px;left:4px;z-index:50;max-width:92%;padding:4px 6px;' +
+      'font:10px/1.35 monospace;color:#0f0;background:rgba(0,0,0,0.8);white-space:pre;' +
+      'pointer-events:none;border-radius:4px;';
+    dbg.textContent = 'touch-debug ready (swipe here)';
+    touchContainer.appendChild(dbg);
+    let tsCount = 0;
+    let tmCount = 0;
+    const renderDbg = (extra: string) => {
+      const term = terminalRef.current;
+      const viewport = touchContainer.querySelector<HTMLElement>('.xterm-viewport');
+      const ta = getComputedStyle(touchContainer).touchAction;
+      const ydisp = term?.buffer.active.viewportY;
+      const baseY = term?.buffer.active.baseY;
+      dbg.textContent =
+        `ts=${tsCount} tm=${tmCount} ta=${ta}\n` +
+        `rows=${term?.rows} vpH=${viewport?.clientHeight ?? '?'} ydisp=${ydisp}/${baseY}\n` +
+        extra;
+    };
+
     const rowHeightPx = (): number => {
       const rows = terminalRef.current?.rows || 0;
       const viewport = touchContainer.querySelector<HTMLElement>('.xterm-viewport');
@@ -123,16 +147,21 @@ export function useShellTerminal({
     };
 
     const handleTouchStart = (event: TouchEvent) => {
+      tsCount += 1;
       if (event.touches.length !== 1) {
         lastTouchY = null;
+        renderDbg(`start: touches=${event.touches.length} (ignored)`);
         return;
       }
       lastTouchY = event.touches[0].clientY;
       scrollAccumPx = 0;
+      renderDbg(`start y=${Math.round(lastTouchY)}`);
     };
 
     const handleTouchMove = (event: TouchEvent) => {
+      tmCount += 1;
       if (event.touches.length !== 1 || lastTouchY === null) {
+        renderDbg(`move: touches=${event.touches.length} last=${lastTouchY} (ignored)`);
         return;
       }
       const currentY = event.touches[0].clientY;
@@ -147,6 +176,9 @@ export function useShellTerminal({
       }
       // Block native scroll/selection so only our scrollLines() drives motion.
       event.preventDefault();
+      renderDbg(
+        `move accum=${Math.round(scrollAccumPx)} rowPx=${rowPx.toFixed(1)} lines=${lines} cancelable=${event.cancelable}`,
+      );
     };
 
     const handleTouchEnd = () => {
@@ -310,6 +342,7 @@ export function useShellTerminal({
       touchContainer.removeEventListener('touchmove', handleTouchMove);
       touchContainer.removeEventListener('touchend', handleTouchEnd);
       touchContainer.removeEventListener('touchcancel', handleTouchEnd);
+      dbg.remove();
       resizeObserver.disconnect();
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
