@@ -428,6 +428,9 @@ export const runMigrations = (db: Database) => {
 
     // Project groups migration: create table + add group_id column to projects
     db.exec(PROJECT_GROUPS_TABLE_SCHEMA_SQL);
+    const projectGroupsTableInfo = getTableInfo(db, 'project_groups');
+    const projectGroupColumnNames = projectGroupsTableInfo.map((column) => column.name);
+    addColumnToTableIfNotExists(db, 'project_groups', projectGroupColumnNames, 'color', 'TEXT DEFAULT NULL');
     const projectsTableInfoForGroups = getTableInfo(db, 'projects');
     const projectColumnNamesForGroups = projectsTableInfoForGroups.map((column) => column.name);
     addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForGroups, 'group_id', 'TEXT DEFAULT NULL REFERENCES project_groups(group_id) ON DELETE SET NULL');

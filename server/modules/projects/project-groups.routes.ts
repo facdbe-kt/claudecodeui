@@ -5,6 +5,16 @@ import { asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
 const router = express.Router();
 
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeColor(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return HEX_COLOR_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
 /**
  * GET /api/projects/groups — List all project groups
  */
@@ -22,13 +32,13 @@ router.get(
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    const { name } = req.body as { name?: string };
+    const { name, color } = req.body as { name?: string; color?: string };
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       res.status(400).json({ error: 'Group name is required' });
       return;
     }
 
-    const group = projectGroupsDb.createGroup(name);
+    const group = projectGroupsDb.createGroup(name, normalizeColor(color));
     res.json(createApiSuccessResponse({ group }));
   }),
 );
@@ -54,6 +64,33 @@ router.put(
 
     projectGroupsDb.renameGroup(groupId, name);
     res.json(createApiSuccessResponse({ group: { ...existing, group_name: name.trim() } }));
+  }),
+);
+
+/**
+ * PUT /api/projects/groups/:groupId/color — Set (or clear) a group's color
+ * Body: { color: string | null } — color must be a #rrggbb hex string
+ */
+router.put(
+  '/:groupId/color',
+  asyncHandler(async (req, res) => {
+    const groupId = req.params.groupId as string;
+    const { color } = req.body as { color?: string | null };
+
+    const existing = projectGroupsDb.getGroupById(groupId);
+    if (!existing) {
+      res.status(404).json({ error: 'Group not found' });
+      return;
+    }
+
+    const normalized = color === null ? null : normalizeColor(color);
+    if (color !== null && normalized === null) {
+      res.status(400).json({ error: 'Color must be a #rrggbb hex string or null' });
+      return;
+    }
+
+    projectGroupsDb.setGroupColor(groupId, normalized);
+    res.json(createApiSuccessResponse({ group: { ...existing, color: normalized } }));
   }),
 );
 

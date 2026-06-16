@@ -34,11 +34,11 @@ export function useProjectGroups() {
     void fetchGroups();
   }, [fetchGroups]);
 
-  const createGroup = useCallback(async (name: string): Promise<ProjectGroup | null> => {
+  const createGroup = useCallback(async (name: string, color?: string | null): Promise<ProjectGroup | null> => {
     try {
       const response = await authenticatedFetch('/api/projects/groups', {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, color }),
       });
       if (!response.ok) return null;
       const data = (await response.json()) as ApiResponse<{ group: ProjectGroup }>;
@@ -72,6 +72,21 @@ export function useProjectGroups() {
       );
     } catch (error) {
       console.error('Error renaming group:', error);
+    }
+  }, []);
+
+  const setGroupColor = useCallback(async (groupId: string, color: string | null) => {
+    try {
+      const response = await authenticatedFetch(`/api/projects/groups/${groupId}/color`, {
+        method: 'PUT',
+        body: JSON.stringify({ color }),
+      });
+      if (!response.ok) return;
+      setGroups((prev) =>
+        prev.map((g) => (g.group_id === groupId ? { ...g, color } : g)),
+      );
+    } catch (error) {
+      console.error('Error setting group color:', error);
     }
   }, []);
 
@@ -124,6 +139,7 @@ export function useProjectGroups() {
     createGroup,
     renameGroup,
     deleteGroup,
+    setGroupColor,
     assignProjectToGroup,
     toggleGroupExpanded,
   };

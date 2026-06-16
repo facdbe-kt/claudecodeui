@@ -6,10 +6,11 @@ export type ProjectGroupRow = {
   group_id: string;
   group_name: string;
   sort_order: number;
+  color: string | null;
 };
 
 export const projectGroupsDb = {
-  createGroup(groupName: string): ProjectGroupRow {
+  createGroup(groupName: string, color: string | null = null): ProjectGroupRow {
     const db = getConnection();
     const groupId = randomUUID();
     const maxOrder = db.prepare(`
@@ -18,17 +19,17 @@ export const projectGroupsDb = {
     `).get() as { next_order: number };
 
     db.prepare(`
-      INSERT INTO project_groups (group_id, group_name, sort_order)
-      VALUES (?, ?, ?)
-    `).run(groupId, groupName.trim(), maxOrder.next_order);
+      INSERT INTO project_groups (group_id, group_name, sort_order, color)
+      VALUES (?, ?, ?, ?)
+    `).run(groupId, groupName.trim(), maxOrder.next_order, color);
 
-    return { group_id: groupId, group_name: groupName.trim(), sort_order: maxOrder.next_order };
+    return { group_id: groupId, group_name: groupName.trim(), sort_order: maxOrder.next_order, color };
   },
 
   getAllGroups(): ProjectGroupRow[] {
     const db = getConnection();
     return db.prepare(`
-      SELECT group_id, group_name, sort_order
+      SELECT group_id, group_name, sort_order, color
       FROM project_groups
       ORDER BY sort_order ASC
     `).all() as ProjectGroupRow[];
@@ -37,7 +38,7 @@ export const projectGroupsDb = {
   getGroupById(groupId: string): ProjectGroupRow | null {
     const db = getConnection();
     const row = db.prepare(`
-      SELECT group_id, group_name, sort_order
+      SELECT group_id, group_name, sort_order, color
       FROM project_groups
       WHERE group_id = ?
     `).get(groupId) as ProjectGroupRow | undefined;
@@ -52,6 +53,15 @@ export const projectGroupsDb = {
       SET group_name = ?
       WHERE group_id = ?
     `).run(newName.trim(), groupId);
+  },
+
+  setGroupColor(groupId: string, color: string | null): void {
+    const db = getConnection();
+    db.prepare(`
+      UPDATE project_groups
+      SET color = ?
+      WHERE group_id = ?
+    `).run(color, groupId);
   },
 
   deleteGroup(groupId: string): void {

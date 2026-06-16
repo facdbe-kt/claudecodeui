@@ -85,7 +85,8 @@ export const PROJECT_GROUPS_TABLE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS project_groups (
     group_id TEXT PRIMARY KEY NOT NULL,
     group_name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    color TEXT DEFAULT NULL
 );
 `;
 

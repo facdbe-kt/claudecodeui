@@ -59,6 +59,7 @@ function Sidebar({
     createGroup,
     renameGroup,
     deleteGroup,
+    setGroupColor,
     assignProjectToGroup,
     toggleGroupExpanded,
   } = useProjectGroups();
@@ -207,6 +208,7 @@ function Sidebar({
       await deleteGroup(groupId);
       void refreshProjects();
     },
+    onSetGroupColor: setGroupColor,
     onAssignProjectToGroup: assignProjectToGroup,
     onRefreshProjects: () => { void refreshProjects(); },
     t,

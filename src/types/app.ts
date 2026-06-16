@@ -74,6 +74,7 @@ export interface ProjectGroup {
   group_id: string;
   group_name: string;
   sort_order: number;
+  color?: string | null;
 }
 
 export interface LoadingProgress {

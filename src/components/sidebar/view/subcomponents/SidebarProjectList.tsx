@@ -5,6 +5,7 @@ import { cn } from '../../../../lib/utils';
 import type { LoadingProgress, Project, ProjectSession, LLMProvider, ProjectGroup } from '../../../../types/app';
 import type { MCPServerStatus, SessionWithProvider } from '../../types/types';
 import { PROJECT_DND_MIME, isProjectDrag } from '../../utils/dnd';
+import { getGroupColor, nextGroupColor } from '../../utils/groupColors';
 
 import SidebarProjectItem from './SidebarProjectItem';
 import SidebarProjectsState from './SidebarProjectsState';
@@ -55,9 +56,10 @@ export type SidebarProjectListProps = {
   groups: ProjectGroup[];
   expandedGroups: Set<string>;
   onToggleGroupExpanded: (groupId: string) => void;
-  onCreateGroup: (name: string) => Promise<ProjectGroup | null>;
+  onCreateGroup: (name: string, color?: string | null) => Promise<ProjectGroup | null>;
   onRenameGroup: (groupId: string, name: string) => Promise<void>;
   onDeleteGroup: (groupId: string) => Promise<void>;
+  onSetGroupColor: (groupId: string, color: string | null) => Promise<void>;
   onAssignProjectToGroup: (projectId: string, groupId: string | null) => Promise<boolean>;
   onRefreshProjects: () => void;
   t: TFunction;
@@ -123,6 +125,7 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
     onCreateGroup,
     onRenameGroup,
     onDeleteGroup,
+    onSetGroupColor,
     onAssignProjectToGroup,
     onRefreshProjects,
     t,
@@ -176,7 +179,8 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
-    await onCreateGroup(newGroupName.trim());
+    // Rotate through the palette so each new group gets a distinct default color.
+    await onCreateGroup(newGroupName.trim(), nextGroupColor(groups.length));
     setNewGroupName('');
     setShowCreateGroup(false);
   };
@@ -196,7 +200,7 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
           <div className="flex items-center gap-1">
             <input
               type="text"
-              className="flex-1 rounded border border-gray-600 bg-gray-700 px-2 py-1 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+              className="flex-1 rounded border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-primary focus:outline-none"
               placeholder={t('sidebar.newGroupPlaceholder', 'Group name...')}
               value={newGroupName}
               onChange={(e) => setNewGroupName(e.target.value)}
@@ -207,13 +211,13 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
               autoFocus
             />
             <button
-              className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+              className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
               onClick={() => void handleCreateGroup()}
             >
               ✓
             </button>
             <button
-              className="rounded bg-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-500"
+              className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground hover:bg-muted/80"
               onClick={() => { setShowCreateGroup(false); setNewGroupName(''); }}
             >
               ✕
@@ -221,10 +225,10 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
           </div>
         ) : (
           <button
-            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
             onClick={() => setShowCreateGroup(true)}
           >
-            <span>+</span>
+            <span className="text-sm leading-none">+</span>
             <span>{t('sidebar.createGroup', 'New Group')}</span>
           </button>
         )}
@@ -244,12 +248,16 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
               onToggle={() => onToggleGroupExpanded(group.group_id)}
               onRename={(name) => void onRenameGroup(group.group_id, name)}
               onDelete={() => void onDeleteGroup(group.group_id)}
+              onSetColor={(color) => void onSetGroupColor(group.group_id, color)}
               onDropProject={(projectId) => void handleMoveToGroup(projectId, group.group_id)}
             />
             {isExpanded && (
-              <div className="ml-2 border-l border-gray-700 pl-1">
+              <div
+                className="ml-2 border-l-2 pl-1"
+                style={{ borderColor: getGroupColor(group.color) }}
+              >
                 {groupProjects.length === 0 ? (
-                  <div className="px-2 py-1 text-xs italic text-gray-500">
+                  <div className="px-2 py-1 text-xs italic text-muted-foreground">
                     {t('sidebar.emptyGroup', 'No projects')}
                   </div>
                 ) : (
