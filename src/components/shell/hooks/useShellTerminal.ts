@@ -104,94 +104,68 @@ export function useShellTerminal({
 
     nextTerminal.open(terminalContainerRef.current);
 
-    // Manual touch-scroll: xterm's native viewport touch-scroll is unreliable
-    // with the WebGL/canvas renderer (the canvas overlays the scroll
-    // viewport), so a vertical swipe on mobile never reaches history. We
-    // translate single-finger vertical drags into terminal.scrollLines().
-    // Paired with `touch-action: none` on the .xterm subtree (index.css) so
-    // the browser yields the gesture and honours preventDefault().
+    // Touch-scroll. The terminal usually runs a full-screen CLI on the
+    // alternate screen buffer, which has no xterm scrollback to move — desktop
+    // scrolling works only because the mouse wheel is forwarded to the app. So
+    // we translate single-finger vertical swipes into wheel events dispatched
+    // to xterm's viewport, letting xterm apply its existing mode-aware handling
+    // (scroll scrollback in the normal buffer; forward wheel/arrow sequences to
+    // the app on the alternate screen) — exactly like a desktop wheel.
+    //
+    // Dispatching is coalesced into one wheel event per animation frame: a
+    // touchmove fires far more often than the app can repaint, and flushing on
+    // every event floods the PTY with escape sequences, producing stutter and
+    // ghosting. Paired with `touch-action: none` on the .xterm subtree
+    // (index.css) so the browser yields the gesture and honours preventDefault.
     const touchContainer = terminalContainerRef.current;
+    const getViewport = () => touchContainer.querySelector<HTMLElement>('.xterm-viewport');
     let lastTouchY: number | null = null;
     let scrollAccumPx = 0;
+    let scrollRafId: number | null = null;
 
-    // [DIAG bug1] on-screen overlay so mobile touch behaviour is visible
-    // without remote devtools. Screenshot it on the phone, then remove.
-    const dbg = document.createElement('div');
-    dbg.id = 'shell-touch-debug';
-    dbg.style.cssText =
-      'position:absolute;top:4px;left:4px;z-index:50;max-width:92%;padding:4px 6px;' +
-      'font:10px/1.35 monospace;color:#0f0;background:rgba(0,0,0,0.8);white-space:pre;' +
-      'pointer-events:none;border-radius:4px;';
-    dbg.textContent = 'touch-debug ready (swipe here)';
-    touchContainer.appendChild(dbg);
-    let tsCount = 0;
-    let tmCount = 0;
-    const getViewport = () => touchContainer.querySelector<HTMLElement>('.xterm-viewport');
-
-    const renderDbg = (extra: string) => {
+    const flushTouchScroll = () => {
+      scrollRafId = null;
       const term = terminalRef.current;
       const viewport = getViewport();
-      const ta = viewport ? getComputedStyle(viewport).touchAction : '?';
-      const ydisp = term?.buffer.active.viewportY;
-      const baseY = term?.buffer.active.baseY;
-      dbg.textContent =
-        `ts=${tsCount} tm=${tmCount} ta=${ta}\n` +
-        `rows=${term?.rows} vpH=${viewport?.clientHeight ?? '?'} ydisp=${ydisp}/${baseY}\n` +
-        `scrollTop=${viewport?.scrollTop ?? '?'} scrollH=${viewport?.scrollHeight ?? '?'}\n` +
-        extra;
+      if (!term || !viewport) {
+        return;
+      }
+      const cell = term.rows ? viewport.clientHeight / term.rows : 17;
+      const lines = Math.trunc(scrollAccumPx / cell);
+      if (lines === 0) {
+        return;
+      }
+      scrollAccumPx -= lines * cell;
+      viewport.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: lines,
+          deltaMode: 1, // DOM_DELTA_LINE
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      tsCount += 1;
       if (event.touches.length !== 1) {
         lastTouchY = null;
-        renderDbg(`start: touches=${event.touches.length} (ignored)`);
         return;
       }
       lastTouchY = event.touches[0].clientY;
       scrollAccumPx = 0;
-      renderDbg(`start y=${Math.round(lastTouchY)}`);
     };
 
     const handleTouchMove = (event: TouchEvent) => {
-      tmCount += 1;
       if (event.touches.length !== 1 || lastTouchY === null) {
-        renderDbg(`move: touches=${event.touches.length} last=${lastTouchY} (ignored)`);
         return;
       }
       const currentY = event.touches[0].clientY;
-      const dy = lastTouchY - currentY;
+      scrollAccumPx += lastTouchY - currentY;
       lastTouchY = currentY;
-      scrollAccumPx += dy;
-
-      // The terminal usually runs a full-screen CLI on the alternate screen
-      // buffer, which has no scrollback for us to move — desktop scrolling
-      // works only because the mouse wheel is forwarded to the app. So once
-      // a swipe accrues a full row, synthesize a line-mode wheel event and
-      // let xterm apply its existing, mode-aware handling (scroll scrollback
-      // in the normal buffer; forward wheel/arrow sequences to the app on the
-      // alternate screen) — exactly what a desktop wheel does.
-      const term = terminalRef.current;
-      const viewport = getViewport();
-      const cell = viewport && term?.rows ? viewport.clientHeight / term.rows : 17;
-      const lines = Math.trunc(scrollAccumPx / cell);
-      let dispatched = 0;
-      if (lines !== 0 && viewport) {
-        scrollAccumPx -= lines * cell;
-        viewport.dispatchEvent(
-          new WheelEvent('wheel', {
-            deltaY: lines,
-            deltaMode: 1, // DOM_DELTA_LINE
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-        dispatched = lines;
-      }
       event.preventDefault();
-      renderDbg(
-        `dy=${dy.toFixed(1)} accum=${Math.round(scrollAccumPx)} wheel=${dispatched} type=${term?.buffer.active.type} cancelable=${event.cancelable}`,
-      );
+      if (scrollRafId === null) {
+        scrollRafId = window.requestAnimationFrame(flushTouchScroll);
+      }
     };
 
     const handleTouchEnd = () => {
@@ -302,10 +276,6 @@ export function useShellTerminal({
       }
 
       currentFitAddon.fit();
-      // [DIAG bug2] container size + cols/rows at initial fit.
-      console.log(
-        `[DIAG bug2] init-fit containerW=${terminalContainerRef.current?.clientWidth} containerH=${terminalContainerRef.current?.clientHeight} cols=${currentTerminal.cols} rows=${currentTerminal.rows}`
-      );
       sendSocketMessage(wsRef.current, {
         type: 'resize',
         cols: currentTerminal.cols,
@@ -335,10 +305,6 @@ export function useShellTerminal({
         }
 
         currentFitAddon.fit();
-        // [DIAG bug2] container size + cols/rows on every resize-observer fit.
-        console.log(
-          `[DIAG bug2] resize-fit containerW=${terminalContainerRef.current?.clientWidth} containerH=${terminalContainerRef.current?.clientHeight} cols=${currentTerminal.cols} rows=${currentTerminal.rows}`
-        );
         sendSocketMessage(wsRef.current, {
           type: 'resize',
           cols: currentTerminal.cols,
@@ -355,7 +321,9 @@ export function useShellTerminal({
       touchContainer.removeEventListener('touchmove', handleTouchMove);
       touchContainer.removeEventListener('touchend', handleTouchEnd);
       touchContainer.removeEventListener('touchcancel', handleTouchEnd);
-      dbg.remove();
+      if (scrollRafId !== null) {
+        window.cancelAnimationFrame(scrollRafId);
+      }
       resizeObserver.disconnect();
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
