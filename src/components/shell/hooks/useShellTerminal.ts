@@ -112,6 +112,7 @@ export function useShellTerminal({
     // the browser yields the gesture and honours preventDefault().
     const touchContainer = terminalContainerRef.current;
     let lastTouchY: number | null = null;
+    let scrollAccumPx = 0;
 
     // [DIAG bug1] on-screen overlay so mobile touch behaviour is visible
     // without remote devtools. Screenshot it on the phone, then remove.
@@ -148,6 +149,7 @@ export function useShellTerminal({
         return;
       }
       lastTouchY = event.touches[0].clientY;
+      scrollAccumPx = 0;
       renderDbg(`start y=${Math.round(lastTouchY)}`);
     };
 
@@ -160,23 +162,35 @@ export function useShellTerminal({
       const currentY = event.touches[0].clientY;
       const dy = lastTouchY - currentY;
       lastTouchY = currentY;
+      scrollAccumPx += dy;
 
-      // Drive xterm's own scroll viewport directly. A programmatic scrollTop
-      // change fires the viewport 'scroll' event that xterm listens to and
-      // syncs its render against — this works regardless of touch-action or
-      // the WebGL canvas overlay, unlike relying on scrollLines() alone.
+      // The terminal usually runs a full-screen CLI on the alternate screen
+      // buffer, which has no scrollback for us to move — desktop scrolling
+      // works only because the mouse wheel is forwarded to the app. So once
+      // a swipe accrues a full row, synthesize a line-mode wheel event and
+      // let xterm apply its existing, mode-aware handling (scroll scrollback
+      // in the normal buffer; forward wheel/arrow sequences to the app on the
+      // alternate screen) — exactly what a desktop wheel does.
+      const term = terminalRef.current;
       const viewport = getViewport();
-      const before = viewport?.scrollTop ?? 0;
-      if (viewport) {
-        viewport.scrollTop = before + dy;
-      }
-      // Fallback in case the viewport isn't scrollable for some reason.
-      if (viewport && viewport.scrollTop === before && dy !== 0) {
-        terminalRef.current?.scrollLines(dy > 0 ? 1 : -1);
+      const cell = viewport && term?.rows ? viewport.clientHeight / term.rows : 17;
+      const lines = Math.trunc(scrollAccumPx / cell);
+      let dispatched = 0;
+      if (lines !== 0 && viewport) {
+        scrollAccumPx -= lines * cell;
+        viewport.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: lines,
+            deltaMode: 1, // DOM_DELTA_LINE
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        dispatched = lines;
       }
       event.preventDefault();
       renderDbg(
-        `dy=${dy} top:${Math.round(before)}->${Math.round(viewport?.scrollTop ?? 0)} cancelable=${event.cancelable}`,
+        `dy=${dy.toFixed(1)} accum=${Math.round(scrollAccumPx)} wheel=${dispatched} type=${term?.buffer.active.type} cancelable=${event.cancelable}`,
       );
     };
 
