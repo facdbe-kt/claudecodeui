@@ -104,6 +104,60 @@ export function useShellTerminal({
 
     nextTerminal.open(terminalContainerRef.current);
 
+    // Manual touch-scroll: xterm's native viewport touch-scroll is unreliable
+    // with the WebGL/canvas renderer (the canvas overlays the scroll
+    // viewport), so a vertical swipe on mobile never reaches history. We
+    // translate single-finger vertical drags into terminal.scrollLines().
+    // Paired with `touch-action: none` on the .xterm subtree (index.css) so
+    // the browser yields the gesture and honours preventDefault().
+    const touchContainer = terminalContainerRef.current;
+    let lastTouchY: number | null = null;
+    let scrollAccumPx = 0;
+
+    const rowHeightPx = (): number => {
+      const rows = terminalRef.current?.rows || 0;
+      const viewport = touchContainer.querySelector<HTMLElement>('.xterm-viewport');
+      const height = viewport?.clientHeight || touchContainer.clientHeight || 0;
+      // Fall back to ~fontSize * 1.2 line-height when geometry isn't ready yet.
+      return rows > 0 && height > 0 ? height / rows : 17;
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        lastTouchY = null;
+        return;
+      }
+      lastTouchY = event.touches[0].clientY;
+      scrollAccumPx = 0;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || lastTouchY === null) {
+        return;
+      }
+      const currentY = event.touches[0].clientY;
+      scrollAccumPx += lastTouchY - currentY;
+      lastTouchY = currentY;
+
+      const rowPx = rowHeightPx();
+      const lines = Math.trunc(scrollAccumPx / rowPx);
+      if (lines !== 0) {
+        terminalRef.current?.scrollLines(lines);
+        scrollAccumPx -= lines * rowPx;
+      }
+      // Block native scroll/selection so only our scrollLines() drives motion.
+      event.preventDefault();
+    };
+
+    const handleTouchEnd = () => {
+      lastTouchY = null;
+    };
+
+    touchContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
+    touchContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
+    touchContainer.addEventListener('touchend', handleTouchEnd, { passive: true });
+    touchContainer.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+
     const copyTerminalSelection = async () => {
       const selection = nextTerminal.getSelection();
       if (!selection) {
@@ -252,6 +306,10 @@ export function useShellTerminal({
 
     return () => {
       terminalContainerRef.current?.removeEventListener('copy', handleTerminalCopy);
+      touchContainer.removeEventListener('touchstart', handleTouchStart);
+      touchContainer.removeEventListener('touchmove', handleTouchMove);
+      touchContainer.removeEventListener('touchend', handleTouchEnd);
+      touchContainer.removeEventListener('touchcancel', handleTouchEnd);
       resizeObserver.disconnect();
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);

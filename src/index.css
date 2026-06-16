@@ -610,16 +610,14 @@
       max-width: calc(100vw - 120px); /* Account for sidebar padding and buttons */
     }
     
-    /* Terminal: allow vertical swipe-to-scroll through history on mobile.
-       The viewport is xterm's own scroll container; it has neither the
-       .overflow-y-auto class nor [data-scroll-container], so it must opt
-       into pan-y explicitly. Forcing user-select:text here would make a
-       vertical swipe start a text selection instead of scrolling, so the
-       viewport opts out of selection and lets xterm's own pointer-based
-       selection (long-press) handle copying. */
-    .xterm .xterm-viewport {
-      touch-action: pan-y !important;
-      -webkit-overflow-scrolling: touch;
+    /* Terminal: a vertical swipe must scroll history, not start a text
+       selection. Scrolling itself is driven manually via terminal
+       .scrollLines() in useShellTerminal (see the general .xterm
+       touch-action rule below); here we just stop the swipe from being
+       captured as a selection on touch. */
+    .xterm,
+    .xterm .xterm-viewport,
+    .xterm .xterm-screen {
       -webkit-user-select: none !important;
       user-select: none !important;
     }
@@ -939,4 +937,19 @@
       background-color: transparent;
     }
   }
+}
+
+/* Terminal touch handling (all touch devices, not just <=768px).
+   xterm's native viewport touch-scroll is unreliable with the WebGL/canvas
+   renderer because the canvas overlays the scroll viewport. We drive
+   scrolling manually via terminal.scrollLines() in useShellTerminal, so the
+   browser must NOT claim the vertical pan — otherwise it scrolls on the
+   compositor thread and ignores our preventDefault(). touch-action: none
+   hands full gesture control to our JS handler. A class selector beats the
+   universal `* { touch-action: manipulation }` mobile rule. */
+.xterm,
+.xterm .xterm-viewport,
+.xterm .xterm-screen,
+.xterm canvas {
+  touch-action: none;
 }
