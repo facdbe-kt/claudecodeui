@@ -19,6 +19,7 @@ type ShellIncomingMessage = {
   initialCommand?: string;
   isPlainShell?: boolean;
   forceRestart?: boolean;
+  skipPermissions?: boolean;
 };
 
 type PtySessionEntry = {
@@ -145,13 +146,15 @@ function buildShellCommand(
   }
 
   const command = initialCommand || 'claude';
+  const skipPermissions = readBoolean(message.skipPermissions);
+  const skipFlag = skipPermissions ? ' --dangerously-skip-permissions' : '';
   if (hasSession && sessionId) {
     if (os.platform() === 'win32') {
-      return `claude --resume "${sessionId}"; if ($LASTEXITCODE -ne 0) { claude }`;
+      return `claude${skipFlag} --resume "${sessionId}"; if ($LASTEXITCODE -ne 0) { claude${skipFlag} }`;
     }
-    return `claude --resume "${sessionId}" || claude`;
+    return `claude${skipFlag} --resume "${sessionId}" || claude${skipFlag}`;
   }
-  return command;
+  return `${command}${skipFlag}`;
 }
 
 /**

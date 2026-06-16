@@ -158,6 +158,17 @@ export function useShellConnection({
               initialCommand: initialCommandRef.current,
               isPlainShell: isPlainShellRef.current,
               forceRestart,
+              skipPermissions: (() => {
+                try {
+                  const provider = selectedSessionRef.current?.__provider || localStorage.getItem('selected-provider') || 'claude';
+                  const settingsKey = provider === 'cursor' ? 'cursor-tools-settings' : 'claude-settings';
+                  const saved = localStorage.getItem(settingsKey);
+                  if (saved) {
+                    return Boolean(JSON.parse(saved).skipPermissions);
+                  }
+                } catch {}
+                return false;
+              })(),
             });
           }, TERMINAL_INIT_DELAY_MS);
         };

@@ -180,6 +180,7 @@ function mapCliOptionsToSDK(options = {}) {
   if (settings.skipPermissions && permissionMode !== 'plan') {
     // When skipping permissions, use bypassPermissions mode
     sdkOptions.permissionMode = 'bypassPermissions';
+    sdkOptions.allowDangerouslySkipPermissions = true;
   }
 
   let allowedTools = [...(settings.allowedTools || [])];

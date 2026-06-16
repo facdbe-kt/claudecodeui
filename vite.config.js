@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host,
       port: parseInt(env.VITE_PORT) || 5173,
+      allowedHosts: ['mac-mini.tail51fed7.ts.net'],
       proxy: {
         '/api': `http://${proxyHost}:${serverPort}`,
         '/ws': {
