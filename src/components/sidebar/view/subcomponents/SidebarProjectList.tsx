@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { TFunction } from 'i18next';
 
+import { cn } from '../../../../lib/utils';
 import type { LoadingProgress, Project, ProjectSession, LLMProvider, ProjectGroup } from '../../../../types/app';
 import type { MCPServerStatus, SessionWithProvider } from '../../types/types';
+import { PROJECT_DND_MIME, isProjectDrag } from '../../utils/dnd';
 
 import SidebarProjectItem from './SidebarProjectItem';
 import SidebarProjectsState from './SidebarProjectsState';
@@ -64,11 +66,14 @@ export type SidebarProjectListProps = {
 function renderProjectItem(
   project: Project,
   props: SidebarProjectListProps,
+  onMoveToGroup: (projectId: string, groupId: string | null) => void,
 ) {
   return (
     <SidebarProjectItem
       key={project.projectId}
       project={project}
+      groups={props.groups}
+      onMoveToGroup={onMoveToGroup}
       selectedProject={props.selectedProject}
       selectedSession={props.selectedSession}
       isExpanded={props.expandedProjects.has(project.projectId)}
@@ -125,6 +130,7 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
 
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [isUngroupedDragOver, setIsUngroupedDragOver] = useState(false);
 
   const state = (
     <SidebarProjectsState
@@ -185,12 +191,12 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
   return (
     <div className="pb-safe-area-inset-bottom md:space-y-1">
       {/* Create group button */}
-      <div className="px-2 mb-1">
+      <div className="mb-1 px-2">
         {showCreateGroup ? (
           <div className="flex items-center gap-1">
             <input
               type="text"
-              className="flex-1 text-xs px-2 py-1 rounded bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:border-blue-500"
+              className="flex-1 rounded border border-gray-600 bg-gray-700 px-2 py-1 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
               placeholder={t('sidebar.newGroupPlaceholder', 'Group name...')}
               value={newGroupName}
               onChange={(e) => setNewGroupName(e.target.value)}
@@ -201,13 +207,13 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
               autoFocus
             />
             <button
-              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+              className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
               onClick={() => void handleCreateGroup()}
             >
               ✓
             </button>
             <button
-              className="text-xs px-2 py-1 rounded bg-gray-600 text-gray-300 hover:bg-gray-500"
+              className="rounded bg-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-500"
               onClick={() => { setShowCreateGroup(false); setNewGroupName(''); }}
             >
               ✕
@@ -215,7 +221,7 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
           </div>
         ) : (
           <button
-            className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1"
+            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
             onClick={() => setShowCreateGroup(true)}
           >
             <span>+</span>
@@ -238,15 +244,16 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
               onToggle={() => onToggleGroupExpanded(group.group_id)}
               onRename={(name) => void onRenameGroup(group.group_id, name)}
               onDelete={() => void onDeleteGroup(group.group_id)}
+              onDropProject={(projectId) => void handleMoveToGroup(projectId, group.group_id)}
             />
             {isExpanded && (
               <div className="ml-2 border-l border-gray-700 pl-1">
                 {groupProjects.length === 0 ? (
-                  <div className="text-xs text-gray-500 px-2 py-1 italic">
+                  <div className="px-2 py-1 text-xs italic text-gray-500">
                     {t('sidebar.emptyGroup', 'No projects')}
                   </div>
                 ) : (
-                  groupProjects.map((project) => renderProjectItem(project, props))
+                  groupProjects.map((project) => renderProjectItem(project, props, handleMoveToGroup))
                 )}
               </div>
             )}
@@ -254,11 +261,34 @@ export default function SidebarProjectList(props: SidebarProjectListProps) {
         );
       })}
 
-      {/* Render ungrouped projects */}
-      {ungroupedProjects.map((project) => renderProjectItem(project, props))}
-
-      {/* Context menu for moving projects to groups is handled via right-click on SidebarProjectItem */}
-      {/* This is a minimal inline approach — right-click menu is a future enhancement */}
+      {/* Render ungrouped projects — also a drop target for removing a project from its group */}
+      <div
+        className={cn(
+          'rounded transition-colors',
+          isUngroupedDragOver && groups.length > 0 && 'bg-blue-600/10 ring-1 ring-blue-500/40',
+        )}
+        onDragOver={(event) => {
+          if (groups.length === 0 || !isProjectDrag(event.dataTransfer.types)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          if (!isUngroupedDragOver) setIsUngroupedDragOver(true);
+        }}
+        onDragLeave={() => setIsUngroupedDragOver(false)}
+        onDrop={(event) => {
+          if (groups.length === 0 || !isProjectDrag(event.dataTransfer.types)) return;
+          event.preventDefault();
+          setIsUngroupedDragOver(false);
+          const projectId = event.dataTransfer.getData(PROJECT_DND_MIME);
+          if (projectId) void handleMoveToGroup(projectId, null);
+        }}
+      >
+        {isUngroupedDragOver && groups.length > 0 && (
+          <div className="px-2 py-1 text-xs italic text-blue-400">
+            {t('sidebar.dropToUngroup', 'Drop here to remove from group')}
+          </div>
+        )}
+        {ungroupedProjects.map((project) => renderProjectItem(project, props, handleMoveToGroup))}
+      </div>
     </div>
   );
 }

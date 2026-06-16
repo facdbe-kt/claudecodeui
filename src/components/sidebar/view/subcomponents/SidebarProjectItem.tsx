@@ -3,12 +3,14 @@ import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
 import { cn } from '../../../../lib/utils';
-import type { Project, ProjectSession, LLMProvider } from '../../../../types/app';
+import type { Project, ProjectSession, LLMProvider, ProjectGroup } from '../../../../types/app';
 import type { MCPServerStatus, SessionWithProvider } from '../../types/types';
 import { getTaskIndicatorStatus } from '../../utils/utils';
+import { PROJECT_DND_MIME } from '../../utils/dnd';
 
 import TaskIndicator from './TaskIndicator';
 import SidebarProjectSessions from './SidebarProjectSessions';
+import SidebarProjectMoveMenu from './SidebarProjectMoveMenu';
 
 type SidebarProjectItemProps = {
   project: Project;
@@ -27,6 +29,8 @@ type SidebarProjectItemProps = {
   editingSessionName: string;
   tasksEnabled: boolean;
   mcpServerStatus: MCPServerStatus;
+  groups: ProjectGroup[];
+  onMoveToGroup: (projectId: string, groupId: string | null) => void;
   onEditingNameChange: (name: string) => void;
   onToggleProject: (projectName: string) => void;
   onProjectSelect: (project: Project) => void;
@@ -73,6 +77,8 @@ export default function SidebarProjectItem({
   editingSessionName,
   tasksEnabled,
   mcpServerStatus,
+  groups,
+  onMoveToGroup,
   onEditingNameChange,
   onToggleProject,
   onProjectSelect,
@@ -117,7 +123,15 @@ export default function SidebarProjectItem({
 
   return (
     <div className={cn('md:space-y-1', isDeleting && 'opacity-50 pointer-events-none')}>
-      <div className="md:group group">
+      <div
+        className="md:group group"
+        draggable={!isEditing}
+        onDragStart={(event) => {
+          event.dataTransfer.setData(PROJECT_DND_MIME, project.projectId);
+          event.dataTransfer.setData('text/plain', project.displayName);
+          event.dataTransfer.effectAllowed = 'move';
+        }}
+      >
         <div className="md:hidden">
           <div
             className={cn(
@@ -222,6 +236,15 @@ export default function SidebarProjectItem({
                   </>
                 ) : (
                   <>
+                    <SidebarProjectMoveMenu
+                      project={project}
+                      groups={groups}
+                      onMoveToGroup={onMoveToGroup}
+                      triggerClassName="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/40 active:scale-90"
+                      iconClassName="h-4 w-4 text-muted-foreground"
+                      t={t}
+                    />
+
                     <button
                       className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 bg-red-500/10 active:scale-90 dark:border-red-800 dark:bg-red-900/30"
                       onClick={(event) => {
@@ -356,6 +379,16 @@ export default function SidebarProjectItem({
               </>
             ) : (
               <>
+                <div className="touch:opacity-100 opacity-0 transition-all duration-200 group-hover:opacity-100">
+                  <SidebarProjectMoveMenu
+                    project={project}
+                    groups={groups}
+                    onMoveToGroup={onMoveToGroup}
+                    triggerClassName="flex h-6 w-6 cursor-pointer items-center justify-center rounded hover:bg-accent"
+                    iconClassName="h-3 w-3"
+                    t={t}
+                  />
+                </div>
                 <div
                   className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-accent group-hover:opacity-100"
                   onClick={(event) => {

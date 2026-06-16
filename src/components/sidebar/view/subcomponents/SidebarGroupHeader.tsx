@@ -1,6 +1,8 @@
 import { useState } from 'react';
 
+import { cn } from '../../../../lib/utils';
 import type { ProjectGroup } from '../../../../types/app';
+import { PROJECT_DND_MIME, isProjectDrag } from '../../utils/dnd';
 
 type SidebarGroupHeaderProps = {
   group: ProjectGroup;
@@ -9,6 +11,7 @@ type SidebarGroupHeaderProps = {
   onToggle: () => void;
   onRename: (name: string) => void;
   onDelete: () => void;
+  onDropProject: (projectId: string) => void;
 };
 
 export default function SidebarGroupHeader({
@@ -18,10 +21,12 @@ export default function SidebarGroupHeader({
   onToggle,
   onRename,
   onDelete,
+  onDropProject,
 }: SidebarGroupHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(group.group_name);
   const [showMenu, setShowMenu] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const handleRename = () => {
     if (editName.trim() && editName.trim() !== group.group_name) {
@@ -33,16 +38,33 @@ export default function SidebarGroupHeader({
   return (
     <div className="group relative">
       <div
-        className="flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-800 rounded text-sm"
+        className={cn(
+          'flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-800 rounded text-sm',
+          isDragOver && 'bg-blue-600/30 ring-1 ring-blue-500',
+        )}
         onClick={onToggle}
+        onDragOver={(event) => {
+          if (!isProjectDrag(event.dataTransfer.types)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          if (!isDragOver) setIsDragOver(true);
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(event) => {
+          if (!isProjectDrag(event.dataTransfer.types)) return;
+          event.preventDefault();
+          setIsDragOver(false);
+          const projectId = event.dataTransfer.getData(PROJECT_DND_MIME);
+          if (projectId) onDropProject(projectId);
+        }}
       >
-        <span className="text-gray-400 text-xs transition-transform" style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+        <span className="text-xs text-gray-400 transition-transform" style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
           ▶
         </span>
         {isEditing ? (
           <input
             type="text"
-            className="flex-1 text-xs px-1 py-0.5 rounded bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:border-blue-500"
+            className="flex-1 rounded border border-gray-600 bg-gray-700 px-1 py-0.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
             value={editName}
             onChange={(e) => setEditName(e.target.value)}
             onKeyDown={(e) => {
@@ -56,17 +78,17 @@ export default function SidebarGroupHeader({
           />
         ) : (
           <>
-            <span className="text-gray-300 font-medium text-xs truncate flex-1">
+            <span className="flex-1 truncate text-xs font-medium text-gray-300">
               {group.group_name}
             </span>
-            <span className="text-gray-500 text-xs">
+            <span className="text-xs text-gray-500">
               {projectCount}
             </span>
           </>
         )}
         {/* Action menu trigger */}
         <button
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-200 text-xs px-1"
+          className="px-1 text-xs text-gray-400 opacity-0 hover:text-gray-200 group-hover:opacity-100"
           onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
         >
           ⋯
@@ -75,9 +97,9 @@ export default function SidebarGroupHeader({
 
       {/* Dropdown menu */}
       {showMenu && (
-        <div className="absolute right-2 top-full z-50 mt-0.5 bg-gray-800 border border-gray-700 rounded shadow-lg py-1 min-w-[100px]">
+        <div className="absolute right-2 top-full z-50 mt-0.5 min-w-[100px] rounded border border-gray-700 bg-gray-800 py-1 shadow-lg">
           <button
-            className="w-full text-left text-xs px-3 py-1.5 text-gray-300 hover:bg-gray-700"
+            className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-700"
             onClick={(e) => {
               e.stopPropagation();
               setIsEditing(true);
@@ -88,7 +110,7 @@ export default function SidebarGroupHeader({
             Rename
           </button>
           <button
-            className="w-full text-left text-xs px-3 py-1.5 text-red-400 hover:bg-gray-700"
+            className="w-full px-3 py-1.5 text-left text-xs text-red-400 hover:bg-gray-700"
             onClick={(e) => {
               e.stopPropagation();
               onDelete();
