@@ -248,6 +248,24 @@ export function handleShellConnection(
           }
 
           existingSession.ws = ws;
+
+          // Adopt the reconnecting client's terminal size. The session's PTY
+          // was sized by whichever device opened it first (e.g. a narrow
+          // phone); without this, a later/wider client (e.g. a desktop)
+          // reuses the old width and renders cramped, because it only sends
+          // an `init` here — not a follow-up `resize` — and its container
+          // size never changes to trigger the ResizeObserver. Resizing after
+          // the buffer replay sends SIGWINCH so the running CLI repaints its
+          // live UI at the correct width. Already-committed scrollback stays
+          // wrapped at the original width (inherent to one shared PTY).
+          const reconnectCols = readNumber(data.cols, shellProcess.cols);
+          const reconnectRows = readNumber(data.rows, shellProcess.rows);
+          if (reconnectCols !== shellProcess.cols || reconnectRows !== shellProcess.rows) {
+            console.log(
+              `[DIAG bug2] reconnect-resize key=${ptySessionKey} ${shellProcess.cols}x${shellProcess.rows} -> ${reconnectCols}x${reconnectRows}`
+            );
+            shellProcess.resize(reconnectCols, reconnectRows);
+          }
           return;
         }
 
