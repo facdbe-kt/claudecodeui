@@ -7,6 +7,7 @@ import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils
 import { getArchivedProjectsWithSessions, getProjectSessionsPage, getProjectsWithSessions } from '@/modules/projects/services/projects-with-sessions-fetch.service.js';
 import { deleteOrArchiveProject, restoreArchivedProject } from '@/modules/projects/services/project-delete.service.js';
 import { applyLegacyStarredProjectIds, toggleProjectStar } from '@/modules/projects/services/project-star.service.js';
+import { projectGroupsDb } from '@/modules/database/index.js';
 
 const router = express.Router();
 
@@ -267,6 +268,29 @@ router.delete(
     const force = req.query.force === 'true';
     await deleteOrArchiveProject(projectId, force);
     res.json({ success: true });
+  }),
+);
+
+/**
+ * PUT /api/projects/:projectId/group — Assign project to a group or remove from group
+ * Body: { groupId: string | null }
+ */
+router.put(
+  '/:projectId/group',
+  asyncHandler(async (req, res) => {
+    const projectId = typeof req.params.projectId === 'string' ? req.params.projectId : '';
+    const { groupId } = req.body as { groupId?: string | null };
+
+    if (groupId !== null && groupId !== undefined) {
+      const group = projectGroupsDb.getGroupById(groupId);
+      if (!group) {
+        res.status(404).json({ error: 'Group not found' });
+        return;
+      }
+    }
+
+    projectGroupsDb.assignProjectToGroup(projectId, groupId ?? null);
+    res.json(createApiSuccessResponse({ projectId, groupId: groupId ?? null }));
   }),
 );
 

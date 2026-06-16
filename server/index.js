@@ -68,6 +68,7 @@ import commandsRoutes from './routes/commands.js';
 import settingsRoutes from './routes/settings.js';
 import agentRoutes from './routes/agent.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
+import projectGroupsRoutes from './modules/projects/project-groups.routes.js';
 import userRoutes from './routes/user.js';
 import geminiRoutes from './routes/gemini.js';
 import pluginsRoutes from './routes/plugins.js';
@@ -172,6 +173,7 @@ app.use('/api', validateApiKey);
 app.use('/api/auth', authRoutes);
 
 // Projects API Routes (protected)
+app.use('/api/projects/groups', authenticateToken, projectGroupsRoutes);
 app.use('/api/projects', authenticateToken, projectModuleRoutes);
 
 // Git API Routes (protected)

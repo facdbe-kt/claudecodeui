@@ -59,6 +59,7 @@ export interface Project {
   fullPath: string;
   path?: string;
   isStarred?: boolean;
+  groupId?: string | null;
   sessions?: ProjectSession[];
   cursorSessions?: ProjectSession[];
   codexSessions?: ProjectSession[];
@@ -67,6 +68,12 @@ export interface Project {
   sessionMeta?: ProjectSessionMeta;
   taskmaster?: ProjectTaskmasterInfo;
   [key: string]: unknown;
+}
+
+export interface ProjectGroup {
+  group_id: string;
+  group_name: string;
+  sort_order: number;
 }
 
 export interface LoadingProgress {

@@ -5,6 +5,7 @@ import { useDeviceSettings } from '../../../hooks/useDeviceSettings';
 import { useVersionCheck } from '../../../hooks/useVersionCheck';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useSidebarController } from '../hooks/useSidebarController';
+import { useProjectGroups } from '../hooks/useProjectGroups';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
 import { usePaletteOps } from '../../../contexts/PaletteOpsContext';
 import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
@@ -51,6 +52,16 @@ function Sidebar({
   const { setCurrentProject, mcpServerStatus } = useTaskMaster() as TaskMasterSidebarContext;
   const { tasksEnabled } = useTasksSettings();
   const paletteOps = usePaletteOps();
+
+  const {
+    groups,
+    expandedGroups,
+    createGroup,
+    renameGroup,
+    deleteGroup,
+    assignProjectToGroup,
+    toggleGroupExpanded,
+  } = useProjectGroups();
 
   const {
     isSidebarCollapsed,
@@ -186,6 +197,18 @@ function Sidebar({
     onSaveEditingSession: (projectName: string, sessionId: string, summary: string, provider: LLMProvider) => {
       void updateSessionSummary(projectName, sessionId, summary, provider);
     },
+    // Group props
+    groups,
+    expandedGroups,
+    onToggleGroupExpanded: toggleGroupExpanded,
+    onCreateGroup: createGroup,
+    onRenameGroup: renameGroup,
+    onDeleteGroup: async (groupId: string) => {
+      await deleteGroup(groupId);
+      void refreshProjects();
+    },
+    onAssignProjectToGroup: assignProjectToGroup,
+    onRefreshProjects: () => { void refreshProjects(); },
     t,
   };
 

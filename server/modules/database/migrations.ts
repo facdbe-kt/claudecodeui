@@ -3,6 +3,7 @@ import { Database } from 'better-sqlite3';
 import {
   APP_CONFIG_TABLE_SCHEMA_SQL,
   LAST_SCANNED_AT_SQL,
+  PROJECT_GROUPS_TABLE_SCHEMA_SQL,
   PROJECTS_TABLE_SCHEMA_SQL,
   PUSH_SUBSCRIPTIONS_TABLE_SCHEMA_SQL,
   SESSIONS_TABLE_SCHEMA_SQL,
@@ -424,6 +425,12 @@ export const runMigrations = (db: Database) => {
 
     db.exec(PROJECTS_TABLE_SCHEMA_SQL);
     rebuildProjectsTableWithPrimaryKeySchema(db);
+
+    // Project groups migration: create table + add group_id column to projects
+    db.exec(PROJECT_GROUPS_TABLE_SCHEMA_SQL);
+    const projectsTableInfoForGroups = getTableInfo(db, 'projects');
+    const projectColumnNamesForGroups = projectsTableInfoForGroups.map((column) => column.name);
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForGroups, 'group_id', 'TEXT DEFAULT NULL REFERENCES project_groups(group_id) ON DELETE SET NULL');
 
     migrateLegacyWorkspaceTableIntoProjects(db);
     rebuildSessionsTableWithProjectSchema(db);
