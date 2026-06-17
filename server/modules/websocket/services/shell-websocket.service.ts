@@ -287,6 +287,16 @@ function quoteRemotePathForShell(remotePath: string): string {
   return `'${remotePath.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Single-quotes an arbitrary string for safe use as one argument to a remote
+ * shell (e.g. the script passed to `bash -ic '<script>'`). Uses the standard
+ * `'\''` close/escape/reopen idiom so embedded single quotes (such as those
+ * produced by {@link quoteRemotePathForShell}) survive the extra nesting.
+ */
+function singleQuoteForShell(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 type StartRemoteShellArgs = {
   ws: WebSocket;
   data: ShellIncomingMessage;
@@ -312,7 +322,6 @@ async function startRemoteShell(args: StartRemoteShellArgs): Promise<void> {
 
   const remotePath = projectRow.remote_path ?? '';
   const sessionId = readString(data.sessionId) || null;
-  const initialCommand = readString(data.initialCommand);
   const forceRestart = readBoolean(data.forceRestart);
   const cols = readNumber(data.cols, 80);
   const rows = readNumber(data.rows, 24);
@@ -357,18 +366,39 @@ async function startRemoteShell(args: StartRemoteShellArgs): Promise<void> {
   // never reaches the channel.
   const quotedRemotePath = remotePath ? quoteRemotePathForShell(remotePath) : '';
 
+  // Launch the provider command (or an interactive login shell for plain
+  // shells) as a clean FOREGROUND process — the same way the local node-pty
+  // path runs `bash -c "<command>"` — instead of typing `cd`/the command into
+  // an interactive prompt. Wrapping in `bash -ic` sources the remote login
+  // environment (PATH/nvm, AI-CLI auth) exactly as the user's own terminal
+  // does; a non-interactive shell resolves the wrong binary and fails auth.
+  // `-i` combined with `-c` loads rc files WITHOUT drawing a prompt, so there
+  // is no PS1/echoed-command noise and the CLI's full-screen (alternate-screen)
+  // UI renders correctly. A PTY is requested so the process has a controlling
+  // terminal (job control + correct sizing).
+  const providerCommand = buildShellCommand(data, outputContext.dependencies);
+  const cdPrefix = quotedRemotePath ? `cd ${quotedRemotePath} && ` : '';
+  const innerScript = providerCommand
+    ? `${cdPrefix}${providerCommand}`
+    : `${cdPrefix}exec "$SHELL" -il`;
+  const remoteCommand = `bash -ic ${singleQuoteForShell(innerScript)}`;
+
   let channel: ClientChannel;
   try {
     const config = rowToRemoteConfig(projectRow);
     const connection = await sshConnectionManager.connect(projectId, config);
     channel = await new Promise<ClientChannel>((resolve, reject) => {
-      connection.client.shell({ cols, rows, term: 'xterm-256color' }, (err, ch) => {
-        if (err) {
-          reject(err);
-          return;
+      connection.client.exec(
+        remoteCommand,
+        { pty: { term: 'xterm-256color', rows, cols } },
+        (err, ch) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(ch);
         }
-        resolve(ch);
-      });
+      );
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -438,21 +468,10 @@ async function startRemoteShell(args: StartRemoteShellArgs): Promise<void> {
   });
 
   // Emit the banner first so it leads the session, matching the local path.
+  // The working directory and provider command are already baked into the
+  // `bash -ic` invocation above, so nothing is typed into the channel here.
   const welcomeMsg = `\x1b[36mStarting remote terminal in: ${remotePath || '~'}\x1b[0m\r\n`;
   ws.send(JSON.stringify({ type: 'output', data: welcomeMsg }));
-
-  // Start in the project directory by writing `cd` into the channel rather than
-  // relying on a one-shot `exec`: an interactive `shell()` ignores a separate
-  // exec's cwd, and writing the command keeps the user's live session (history,
-  // prompt, subsequent input) anchored in the project path.
-  if (quotedRemotePath) {
-    channel.write(`cd ${quotedRemotePath}\n`);
-  }
-
-  // Same UX as local: run the requested command once the shell is ready.
-  if (initialCommand) {
-    channel.write(`${initialCommand}\n`);
-  }
 }
 
 /**
