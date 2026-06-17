@@ -248,6 +248,10 @@ export const api = {
       authenticatedFetch(`/api/remote-projects/${encodeURIComponent(projectId)}/reconnect`, {
         method: 'POST',
       }),
+    refreshSessions: (projectId) =>
+      authenticatedFetch(`/api/remote-projects/${encodeURIComponent(projectId)}/refresh-sessions`, {
+        method: 'POST',
+      }),
   },
 
   // Browse filesystem for project suggestions

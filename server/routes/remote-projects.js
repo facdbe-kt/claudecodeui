@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { authenticateToken } from '../middleware/auth.js';
 import { credentialsDb, projectsDb } from '../modules/database/index.js';
 import { sshConnectionManager } from '../services/ssh-connection-manager.service.js';
+import { remoteSessionSynchronizer } from '../services/remote-session-synchronizer.service.js';
 import { rowToRemoteConfig } from '../shared/remote-project.js';
 
 const router = express.Router();
@@ -500,6 +501,29 @@ router.post('/:projectId/reconnect', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Failed to reconnect.';
     console.error('Error reconnecting remote project:', error);
     return res.status(502).json({ status: 'error', error: message });
+  }
+});
+
+/**
+ * POST /:projectId/refresh-sessions
+ * Forces an immediate SSH scan of this remote project's transcripts (bypassing
+ * the background throttle) so the user can pull fresh history on demand. Returns
+ * { processed } — the number of sessions indexed — on success.
+ */
+router.post('/:projectId/refresh-sessions', async (req, res) => {
+  const { projectId } = req.params;
+  const owned = loadOwnedRemoteProject(projectId, req.user.id);
+  if (owned.error) {
+    return res.status(owned.status).json({ error: owned.error });
+  }
+
+  try {
+    const processed = await remoteSessionSynchronizer.synchronizeProjectNow(projectId);
+    return res.json({ processed });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to refresh sessions.';
+    console.error('Error refreshing remote sessions:', error);
+    return res.status(502).json({ error: message });
   }
 });
 

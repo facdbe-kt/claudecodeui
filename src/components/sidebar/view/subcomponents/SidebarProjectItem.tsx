@@ -1,4 +1,5 @@
-import { Check, ChevronDown, ChevronRight, Edit3, Server, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Edit3, RefreshCw, Server, Star, Trash2, X } from 'lucide-react';
+import { useState, type MouseEvent } from 'react';
 import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
@@ -47,6 +48,7 @@ type SidebarProjectItemProps = {
     provider: LLMProvider,
   ) => void;
   onLoadMoreSessions: (projectId: string) => void;
+  onRefreshRemoteSessions?: (projectId: string) => Promise<void> | void;
   onNewSession: (project: Project) => void;
   onEditingSessionNameChange: (value: string) => void;
   onStartEditingSession: (sessionId: string, initialName: string) => void;
@@ -117,6 +119,7 @@ export default function SidebarProjectItem({
   onSessionSelect,
   onDeleteSession,
   onLoadMoreSessions,
+  onRefreshRemoteSessions,
   onNewSession,
   onEditingSessionNameChange,
   onStartEditingSession,
@@ -138,6 +141,20 @@ export default function SidebarProjectItem({
 
   const toggleProject = () => onToggleProject(project.projectId);
   const toggleStarProject = () => onToggleStarProject(project.projectId);
+
+  const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
+  const refreshRemoteSessions = async (event: MouseEvent) => {
+    event.stopPropagation();
+    if (isRefreshingRemote || !onRefreshRemoteSessions) {
+      return;
+    }
+    setIsRefreshingRemote(true);
+    try {
+      await onRefreshRemoteSessions(project.projectId);
+    } finally {
+      setIsRefreshingRemote(false);
+    }
+  };
 
   const saveProjectName = () => {
     onSaveProjectName(project.projectId);
@@ -445,6 +462,15 @@ export default function SidebarProjectItem({
                     t={t}
                   />
                 </div>
+                {isRemote && onRefreshRemoteSessions && (
+                  <div
+                    className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-accent group-hover:opacity-100"
+                    onClick={refreshRemoteSessions}
+                    title={t('tooltips.refresh')}
+                  >
+                    <RefreshCw className={cn('h-3 w-3', isRefreshingRemote && 'animate-spin')} />
+                  </div>
+                )}
                 <div
                   className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-accent group-hover:opacity-100"
                   onClick={(event) => {

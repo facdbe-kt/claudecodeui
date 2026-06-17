@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { api } from '../../../utils/api';
 import { useDeviceSettings } from '../../../hooks/useDeviceSettings';
 import { useVersionCheck } from '../../../hooks/useVersionCheck';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
@@ -211,6 +212,12 @@ function Sidebar({
     onSetGroupColor: setGroupColor,
     onAssignProjectToGroup: assignProjectToGroup,
     onRefreshProjects: () => { void refreshProjects(); },
+    onRefreshRemoteSessions: async (projectId: string) => {
+      // Force an immediate remote scan, then reload the project list so the
+      // freshly indexed sessions appear without waiting for a background pass.
+      await api.remoteProjects.refreshSessions(projectId);
+      await refreshProjects();
+    },
     t,
   };
 

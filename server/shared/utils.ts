@@ -184,6 +184,23 @@ export function normalizeProjectPath(inputPath: string): string {
     return '';
   }
 
+  // Remote projects use a synthetic URI key (`scheme://authority/path`, e.g.
+  // `ssh://user@host:22/abs/path`). POSIX/Windows normalization would collapse
+  // the `//` after the scheme and corrupt the key, so when a scheme is present
+  // we preserve `scheme://authority` verbatim and normalize only the path
+  // portion. Real filesystem paths never contain `://`, so this never affects
+  // local project keys.
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/]*)(\/.*)?$/.exec(trimmed);
+  if (schemeMatch) {
+    const scheme = schemeMatch[1].toLowerCase();
+    const authority = schemeMatch[2];
+    const rawPath = schemeMatch[3] ?? '';
+    const normalizedPath = rawPath
+      ? path.posix.normalize(rawPath).replace(/\/+$/, '')
+      : '';
+    return `${scheme}://${authority}${normalizedPath}`;
+  }
+
   const withoutLongPrefix = stripWindowsLongPathPrefix(trimmed);
   const useWindowsPathRules = shouldUseWindowsPathNormalization(withoutLongPrefix);
   const normalized = useWindowsPathRules

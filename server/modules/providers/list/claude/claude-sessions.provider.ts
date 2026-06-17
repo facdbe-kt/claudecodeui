@@ -1,12 +1,15 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import readline from 'node:readline';
 
 import type { IProviderSessions } from '@/shared/interfaces.js';
 import type { AnyRecord, FetchHistoryOptions, FetchHistoryResult, NormalizedMessage } from '@/shared/types.js';
 import { createNormalizedMessage, generateMessageId, readObjectRecord } from '@/shared/utils.js';
 import { sessionsDb } from '@/modules/database/index.js';
+import {
+  isRemoteProjectPath,
+  readRemoteFileLines,
+  resolveRemoteProjectByPath,
+} from '@/services/remote-transcript.service.js';
 
 const PROVIDER = 'claude';
 
@@ -35,70 +38,198 @@ type ClaudeHistoryMessagesResult =
     limit?: number | null;
   };
 
-async function parseAgentTools(filePath: string): Promise<AnyRecord[]> {
+/** Reads a local UTF-8 file and returns its lines (empty array when missing). */
+async function readLocalFileLines(filePath: string): Promise<string[]> {
+  const content = await fsp.readFile(filePath, 'utf8');
+  return content.split('\n');
+}
+
+/**
+ * Extracts the tool_use → tool_result pairs from one sub-agent transcript's
+ * lines. Source-agnostic so local (fs) and remote (SSH) callers share it.
+ */
+function parseAgentToolsFromLines(lines: string[]): AnyRecord[] {
   const tools: AnyRecord[] = [];
 
-  try {
-    const fileStream = fs.createReadStream(filePath);
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity,
-    });
-
-    for await (const line of rl) {
-      if (!line.trim()) {
-        continue;
-      }
-
-      try {
-        const entry = JSON.parse(line) as AnyRecord;
-
-        if (entry.message?.role === 'assistant' && Array.isArray(entry.message?.content)) {
-          for (const part of entry.message.content as AnyRecord[]) {
-            if (part.type === 'tool_use') {
-              tools.push({
-                toolId: part.id,
-                toolName: part.name,
-                toolInput: part.input,
-                timestamp: entry.timestamp,
-              });
-            }
-          }
-        }
-
-        if (entry.message?.role === 'user' && Array.isArray(entry.message?.content)) {
-          for (const part of entry.message.content as AnyRecord[]) {
-            if (part.type !== 'tool_result') {
-              continue;
-            }
-
-            const tool = tools.find((candidate) => candidate.toolId === part.tool_use_id);
-            if (!tool) {
-              continue;
-            }
-
-            tool.toolResult = {
-              content: typeof part.content === 'string'
-                ? part.content
-                : Array.isArray(part.content)
-                  ? part.content
-                    .map((contentPart: AnyRecord) => contentPart?.text || '')
-                    .join('\n')
-                  : JSON.stringify(part.content),
-              isError: Boolean(part.is_error),
-            };
-          }
-        }
-      } catch {
-        // Skip malformed lines that can happen during concurrent writes.
-      }
+  for (const line of lines) {
+    if (!line.trim()) {
+      continue;
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`Error parsing agent file ${filePath}:`, message);
+
+    try {
+      const entry = JSON.parse(line) as AnyRecord;
+
+      if (entry.message?.role === 'assistant' && Array.isArray(entry.message?.content)) {
+        for (const part of entry.message.content as AnyRecord[]) {
+          if (part.type === 'tool_use') {
+            tools.push({
+              toolId: part.id,
+              toolName: part.name,
+              toolInput: part.input,
+              timestamp: entry.timestamp,
+            });
+          }
+        }
+      }
+
+      if (entry.message?.role === 'user' && Array.isArray(entry.message?.content)) {
+        for (const part of entry.message.content as AnyRecord[]) {
+          if (part.type !== 'tool_result') {
+            continue;
+          }
+
+          const tool = tools.find((candidate) => candidate.toolId === part.tool_use_id);
+          if (!tool) {
+            continue;
+          }
+
+          tool.toolResult = {
+            content: typeof part.content === 'string'
+              ? part.content
+              : Array.isArray(part.content)
+                ? part.content
+                  .map((contentPart: AnyRecord) => contentPart?.text || '')
+                  .join('\n')
+                : JSON.stringify(part.content),
+            isError: Boolean(part.is_error),
+          };
+        }
+      }
+    } catch {
+      // Skip malformed lines that can happen during concurrent writes.
+    }
   }
 
   return tools;
+}
+
+/**
+ * Assembles a session's history from the main transcript lines, lazily pulling
+ * each referenced sub-agent's tools through `resolveAgentTools`. Identical for
+ * local and remote sources — only how the lines/agent files are fetched differs.
+ */
+async function assembleSessionMessages(
+  sessionId: string,
+  limit: number | null,
+  offset: number,
+  mainLines: string[],
+  resolveAgentTools: (agentId: string) => Promise<AnyRecord[] | null>,
+): Promise<ClaudeHistoryMessagesResult> {
+  const messages: AnyRecord[] = [];
+  for (const line of mainLines) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const entry = JSON.parse(line) as AnyRecord;
+      if (entry.sessionId === sessionId) {
+        messages.push(entry);
+      }
+    } catch {
+      // Skip malformed JSONL lines that can happen during concurrent writes.
+    }
+  }
+
+  const agentIds = new Set<string>();
+  for (const message of messages) {
+    const agentId = message.toolUseResult?.agentId;
+    if (agentId) {
+      agentIds.add(String(agentId));
+    }
+  }
+
+  const agentToolsCache = new Map<string, AnyRecord[]>();
+  for (const agentId of agentIds) {
+    const tools = await resolveAgentTools(agentId);
+    if (tools && tools.length > 0) {
+      agentToolsCache.set(agentId, tools);
+    }
+  }
+
+  for (const message of messages) {
+    const agentId = message.toolUseResult?.agentId;
+    if (!agentId) {
+      continue;
+    }
+
+    const agentTools = agentToolsCache.get(String(agentId));
+    if (agentTools && agentTools.length > 0) {
+      message.subagentTools = agentTools;
+    }
+  }
+
+  const sortedMessages = messages.sort(
+    (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime(),
+  );
+  const total = sortedMessages.length;
+
+  if (limit === null) {
+    return sortedMessages;
+  }
+
+  const startIndex = Math.max(0, total - offset - limit);
+  const endIndex = total - offset;
+  const paginatedMessages = sortedMessages.slice(startIndex, endIndex);
+  const hasMore = startIndex > 0;
+
+  return {
+    messages: paginatedMessages,
+    total,
+    hasMore,
+    offset,
+    limit,
+  };
+}
+
+/** Loads history for a local session by reading the on-disk transcript. */
+async function getLocalSessionMessages(
+  jsonLPath: string,
+  sessionId: string,
+  limit: number | null,
+  offset: number,
+): Promise<ClaudeHistoryMessagesResult> {
+  const projectDir = path.dirname(jsonLPath);
+  const files = await fsp.readdir(projectDir);
+  const agentFiles = new Set(
+    files.filter((file) => file.endsWith('.jsonl') && file.startsWith('agent-')),
+  );
+
+  const mainLines = await readLocalFileLines(jsonLPath);
+
+  return assembleSessionMessages(sessionId, limit, offset, mainLines, async (agentId) => {
+    const agentFileName = `agent-${agentId}.jsonl`;
+    if (!agentFiles.has(agentFileName)) {
+      return null;
+    }
+    const lines = await readLocalFileLines(path.join(projectDir, agentFileName));
+    return parseAgentToolsFromLines(lines);
+  });
+}
+
+/**
+ * Loads history for a remote session by reading the transcript (and any
+ * referenced sub-agent transcripts) over the project's pooled SSH connection.
+ */
+async function getRemoteSessionMessages(
+  project: NonNullable<ReturnType<typeof resolveRemoteProjectByPath>>,
+  jsonLPath: string,
+  sessionId: string,
+  limit: number | null,
+  offset: number,
+): Promise<ClaudeHistoryMessagesResult> {
+  const remoteDir = path.posix.dirname(jsonLPath);
+  const mainLines = await readRemoteFileLines(project, jsonLPath);
+
+  return assembleSessionMessages(sessionId, limit, offset, mainLines, async (agentId) => {
+    const agentFileName = `agent-${agentId}.jsonl`;
+    // `agentId` originates from transcript content; restrict to a safe charset
+    // before it is composed into a remote path read over SSH.
+    if (!/^agent-[A-Za-z0-9_-]+\.jsonl$/.test(agentFileName)) {
+      return null;
+    }
+    const lines = await readRemoteFileLines(project, path.posix.join(remoteDir, agentFileName));
+    return parseAgentToolsFromLines(lines);
+  });
 }
 
 async function getSessionMessages(
@@ -107,92 +238,22 @@ async function getSessionMessages(
   offset: number,
 ): Promise<ClaudeHistoryMessagesResult> {
   try {
-    const jsonLPath = sessionsDb.getSessionById(sessionId)?.jsonl_path;
+    const session = sessionsDb.getSessionById(sessionId);
+    const jsonLPath = session?.jsonl_path;
 
     if (!jsonLPath) {
       return { messages: [], total: 0, hasMore: false };
     }
 
-    const projectDir = path.dirname(jsonLPath);
-    const files = await fsp.readdir(projectDir);
-    const agentFiles = files.filter((file) => file.endsWith('.jsonl') && file.startsWith('agent-'));
+    const remoteProject = isRemoteProjectPath(session?.project_path)
+      ? resolveRemoteProjectByPath(session!.project_path as string)
+      : null;
 
-    const messages: AnyRecord[] = [];
-    const agentToolsCache = new Map<string, AnyRecord[]>();
-
-    const fileStream = fs.createReadStream(jsonLPath);
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity,
-    });
-
-    for await (const line of rl) {
-      if (!line.trim()) {
-        continue;
-      }
-
-      try {
-        const entry = JSON.parse(line) as AnyRecord;
-        if (entry.sessionId === sessionId) {
-          messages.push(entry);
-        }
-      } catch {
-        // Skip malformed JSONL lines that can happen during concurrent writes.
-      }
+    if (remoteProject) {
+      return await getRemoteSessionMessages(remoteProject, jsonLPath, sessionId, limit, offset);
     }
 
-    const agentIds = new Set<string>();
-    for (const message of messages) {
-      const agentId = message.toolUseResult?.agentId;
-      if (agentId) {
-        agentIds.add(String(agentId));
-      }
-    }
-
-    for (const agentId of agentIds) {
-      const agentFileName = `agent-${agentId}.jsonl`;
-      if (!agentFiles.includes(agentFileName)) {
-        continue;
-      }
-
-      const agentFilePath = path.join(projectDir, agentFileName);
-      const tools = await parseAgentTools(agentFilePath);
-      agentToolsCache.set(agentId, tools);
-    }
-
-    for (const message of messages) {
-      const agentId = message.toolUseResult?.agentId;
-      if (!agentId) {
-        continue;
-      }
-
-      const agentTools = agentToolsCache.get(String(agentId));
-      if (agentTools && agentTools.length > 0) {
-        message.subagentTools = agentTools;
-      }
-    }
-
-    const sortedMessages = messages.sort(
-      (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime(),
-    );
-    const total = sortedMessages.length;
-
-    if (limit === null) {
-      return sortedMessages;
-    }
-
-    const startIndex = Math.max(0, total - offset - limit);
-    const endIndex = total - offset;
-    const paginatedMessages = sortedMessages.slice(startIndex, endIndex);
-    const hasMore = startIndex > 0;
-
-    return {
-      messages: paginatedMessages,
-      total,
-      hasMore,
-      offset,
-      limit,
-    };
+    return await getLocalSessionMessages(jsonLPath, sessionId, limit, offset);
   } catch (error) {
     console.error(`Error reading messages for session ${sessionId}:`, error);
     return limit === null ? [] : { messages: [], total: 0, hasMore: false };

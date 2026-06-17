@@ -93,6 +93,37 @@ export const projectsDb = {
     },
 
     /**
+     * Returns the full remote-aware row for a remote project by its synthetic
+     * `ssh://...` path key. Used by remote transcript reads/synchronization to
+     * recover the SSH connection config from a session's stored `project_path`.
+     */
+    getRemoteProjectByPath(projectPath: string): ProjectRepositoryRow | null {
+        const db = getConnection();
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
+        const row = db.prepare(`
+            SELECT ${REMOTE_PROJECT_COLUMNS}
+            FROM projects
+            WHERE project_path = ? AND project_type = 'remote'
+        `).get(normalizedProjectPath) as ProjectRepositoryRow | undefined;
+
+        return row ?? null;
+    },
+
+    /**
+     * Returns every active `project_type = 'remote'` row with its connection
+     * columns. The remote session synchronizer iterates these to SSH-scan each
+     * host's `~/.claude/projects` transcripts.
+     */
+    getRemoteProjects(): ProjectRepositoryRow[] {
+        const db = getConnection();
+        return db.prepare(`
+            SELECT ${REMOTE_PROJECT_COLUMNS}
+            FROM projects
+            WHERE project_type = 'remote' AND isArchived = 0
+        `).all() as ProjectRepositoryRow[];
+    },
+
+    /**
      * Inserts a new `project_type = 'remote'` row and returns it.
      *
      * The synthetic `project_path` (`ssh://user@host:port/remotePath`) keeps the
@@ -102,9 +133,14 @@ export const projectsDb = {
      */
     createRemoteProject(input: CreateRemoteProjectInput): ProjectRepositoryRow {
         const db = getConnection();
-        const syntheticPath = `ssh://${input.user}@${input.host}:${input.port}${
-            input.remotePath.startsWith('/') ? input.remotePath : `/${input.remotePath}`
-        }`;
+        // Normalize the synthetic key so every later lookup (which always runs
+        // through normalizeProjectPath) matches this stored value exactly, and
+        // so sessions indexed against it link back to this project row.
+        const syntheticPath = normalizeProjectPath(
+            `ssh://${input.user}@${input.host}:${input.port}${
+                input.remotePath.startsWith('/') ? input.remotePath : `/${input.remotePath}`
+            }`
+        );
         const projectId = createHash('sha256').update(syntheticPath).digest('hex').slice(0, 32);
         const displayName = normalizeProjectDisplayName(input.remotePath, input.customProjectName);
 

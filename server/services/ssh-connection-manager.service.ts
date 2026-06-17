@@ -23,6 +23,7 @@
 import { Client } from 'ssh2';
 import type { ConnectConfig } from 'ssh2';
 import { EventEmitter } from 'node:events';
+import { StringDecoder } from 'node:string_decoder';
 import crypto from 'crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -340,16 +341,24 @@ class SSHConnectionManager extends EventEmitter {
         let stderr = '';
         let code = 0;
 
+        // Decode through a StringDecoder so multi-byte UTF-8 sequences (e.g.
+        // Chinese characters) split across chunk boundaries are reassembled
+        // instead of turning into replacement characters.
+        const stdoutDecoder = new StringDecoder('utf8');
+        const stderrDecoder = new StringDecoder('utf8');
+
         channel.on('data', (chunk: Buffer) => {
-          stdout += chunk.toString('utf8');
+          stdout += stdoutDecoder.write(chunk);
         });
         channel.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString('utf8');
+          stderr += stderrDecoder.write(chunk);
         });
         channel.on('exit', (exitCode: number | null) => {
           code = exitCode ?? 0;
         });
         channel.on('close', () => {
+          stdout += stdoutDecoder.end();
+          stderr += stderrDecoder.end();
           resolve({ stdout, stderr, code });
         });
         channel.on('error', (e: Error) => {
@@ -401,6 +410,11 @@ class SSHConnectionManager extends EventEmitter {
         let closed = false;
         let exitCode: number | null = null;
 
+        // Decode through a StringDecoder so multi-byte UTF-8 sequences split
+        // across chunk boundaries are reassembled rather than corrupted.
+        const stdoutDecoder = new StringDecoder('utf8');
+        const stderrDecoder = new StringDecoder('utf8');
+
         const flushLines = (
           buffer: string,
           emit?: (line: string) => void
@@ -416,11 +430,11 @@ class SSHConnectionManager extends EventEmitter {
         };
 
         channel.on('data', (chunk: Buffer) => {
-          stdoutBuffer += chunk.toString('utf8');
+          stdoutBuffer += stdoutDecoder.write(chunk);
           stdoutBuffer = flushLines(stdoutBuffer, handlers.onStdoutLine);
         });
         channel.stderr.on('data', (chunk: Buffer) => {
-          stderrBuffer += chunk.toString('utf8');
+          stderrBuffer += stderrDecoder.write(chunk);
           stderrBuffer = flushLines(stderrBuffer, handlers.onStderrLine);
         });
         channel.on('exit', (code: number | null) => {
@@ -429,6 +443,12 @@ class SSHConnectionManager extends EventEmitter {
         channel.on('close', () => {
           if (closed) return;
           closed = true;
+          // Drain any bytes the decoders are still holding, then flush the
+          // remaining buffers (lines + any trailing partial line).
+          stdoutBuffer += stdoutDecoder.end();
+          stderrBuffer += stderrDecoder.end();
+          stdoutBuffer = flushLines(stdoutBuffer, handlers.onStdoutLine);
+          stderrBuffer = flushLines(stderrBuffer, handlers.onStderrLine);
           // Flush any trailing partial line (no terminating newline).
           if (stdoutBuffer.length > 0 && handlers.onStdoutLine) {
             handlers.onStdoutLine(stdoutBuffer.replace(/\r$/, ''));

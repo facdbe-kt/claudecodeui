@@ -29,7 +29,7 @@
  * error / token_budget frames that `queryClaudeSDK` sends.
  */
 
-import { projectsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { rowToRemoteConfig } from '@/shared/remote-project.js';
 import { createNormalizedMessage } from '@/shared/utils.js';
 import { sessionsService } from '@/modules/providers/index.js';
@@ -146,6 +146,37 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+/**
+ * Records a remote session in the shared `sessions` table so it persists across
+ * reloads exactly like a local session — appearing in the project's sidebar and
+ * loadable as history. The transcript itself lives on the remote host; its path
+ * is backfilled later by the remote session synchronizer, so we never clobber a
+ * previously-synced `jsonl_path` (or an existing custom name) here.
+ *
+ * `projectPath` is the remote project's synthetic `ssh://...` key, which is what
+ * the sidebar and history reader use to associate and re-open the session.
+ */
+function persistRemoteSession(
+  projectPath: string,
+  sessionId: string,
+  summary?: string,
+): void {
+  try {
+    const existing = sessionsDb.getSessionById(sessionId);
+    sessionsDb.createSession(
+      sessionId,
+      'claude',
+      projectPath,
+      existing ? undefined : (summary ?? undefined),
+      undefined,
+      new Date().toISOString(),
+      existing?.jsonl_path ?? null,
+    );
+  } catch (error) {
+    console.error('[remote-claude] failed to persist session row:', error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main entry
 // ---------------------------------------------------------------------------
@@ -184,6 +215,12 @@ async function queryClaudeRemote(
     const resumeId = safeSessionId(sessionId);
     const remoteCommand = buildRemoteCommand(remotePath, resumeId);
 
+    // Resumed turns already have a session id: upsert immediately so the row's
+    // activity is bumped even if the synchronizer has not run yet.
+    if (capturedSessionId) {
+      persistRemoteSession(row.project_path, capturedSessionId, sessionSummary);
+    }
+
     // Holds the registered session; updated once we capture the real session id.
     const session: RemoteSession = {
       // handle assigned below once execStream resolves
@@ -203,6 +240,10 @@ async function queryClaudeRemote(
       if (eventSessionId && !capturedSessionId) {
         capturedSessionId = eventSessionId;
         registerSession(capturedSessionId, session);
+        // Persist the freshly created session so it survives reloads (the local
+        // path relies on the synchronizer for this; remote records it eagerly so
+        // the session is usable before the first remote scan completes).
+        persistRemoteSession(row.project_path, capturedSessionId, sessionSummary);
         if (typeof ws.setSessionId === 'function') {
           ws.setSessionId(capturedSessionId);
         }

@@ -30,6 +30,7 @@ export type SidebarProjectListProps = {
   mcpServerStatus: MCPServerStatus;
   getProjectSessions: (project: Project) => SessionWithProvider[];
   onLoadMoreSessions: (projectId: string) => void;
+  onRefreshRemoteSessions?: (projectId: string) => Promise<void> | void;
   loadingMoreProjects: Set<string>;
   isProjectStarred: (projectName: string) => boolean;
   onEditingNameChange: (value: string) => void;
@@ -102,6 +103,7 @@ function renderProjectItem(
       onSessionSelect={props.onSessionSelect}
       onDeleteSession={props.onDeleteSession}
       onLoadMoreSessions={props.onLoadMoreSessions}
+      onRefreshRemoteSessions={props.onRefreshRemoteSessions}
       onNewSession={props.onNewSession}
       onEditingSessionNameChange={props.onEditingSessionNameChange}
       onStartEditingSession={props.onStartEditingSession}

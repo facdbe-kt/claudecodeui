@@ -43,6 +43,11 @@ export const sessionSynchronizerService = {
       failures.push(reason);
     }
 
+    // Remote projects are intentionally NOT synced here: their transcripts live
+    // on a remote host and each scan is an SSH round trip that must never block a
+    // project-list request. The list endpoint triggers a throttled background
+    // sweep instead (see remoteSessionSynchronizer.triggerBackgroundSync).
+
     if (failures.length === 0) {
       scanStateDb.updateLastScannedAt(scanBoundary);
     } else {
