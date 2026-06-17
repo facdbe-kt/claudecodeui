@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Edit3, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Edit3, Server, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
@@ -60,6 +60,33 @@ const getSessionCountDisplay = (project: Project, sessions: SessionWithProvider[
   return String(total);
 };
 
+const isRemoteProject = (project: Project): boolean => project.project_type === 'remote';
+
+// Maps the remote connection status to a subtle status-dot color. Undefined
+// status (not yet probed) is treated as unknown/gray.
+const CONNECTION_STATUS_DOT: Record<NonNullable<Project['connection_status']>, string> = {
+  connected: 'bg-green-500',
+  disconnected: 'bg-gray-400 dark:bg-gray-500',
+  connecting: 'bg-amber-500',
+  error: 'bg-red-500',
+};
+
+const getConnectionStatusDotClass = (status: Project['connection_status']): string =>
+  (status && CONNECTION_STATUS_DOT[status]) || 'bg-gray-400 dark:bg-gray-500';
+
+// Builds the `user@host:path` descriptor shown in the remote icon tooltip,
+// gracefully omitting any pieces the backend has not populated yet.
+const getRemoteTooltip = (project: Project, t: TFunction): string => {
+  const host = project.remote_host
+    ? project.remote_user
+      ? `${project.remote_user}@${project.remote_host}`
+      : project.remote_host
+    : '';
+  const target = project.remote_path ? (host ? `${host}:${project.remote_path}` : project.remote_path) : host;
+  const status = t(`remoteProject.connectionStatus.${project.connection_status ?? 'unknown'}`);
+  return target ? `${target} (${status})` : `${t('remoteProject.remoteLabel')} (${status})`;
+};
+
 export default function SidebarProjectItem({
   project,
   selectedProject,
@@ -105,6 +132,9 @@ export default function SidebarProjectItem({
   const sessionCountDisplay = getSessionCountDisplay(project, sessions);
   const sessionCountLabel = `${sessionCountDisplay} session${totalSessionCount === 1 ? '' : 's'}`;
   const taskStatus = getTaskIndicatorStatus(project, mcpServerStatus);
+  const isRemote = isRemoteProject(project);
+  const remoteTooltip = isRemote ? getRemoteTooltip(project, t) : undefined;
+  const remoteStatusDotClass = getConnectionStatusDotClass(project.connection_status);
 
   const toggleProject = () => onToggleProject(project.projectId);
   const toggleStarProject = () => onToggleStarProject(project.projectId);
@@ -197,7 +227,20 @@ export default function SidebarProjectItem({
                   ) : (
                     <>
                       <div className="flex min-w-0 flex-1 items-center justify-between">
-                        <h3 className="truncate text-sm font-medium text-foreground">{project.displayName}</h3>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          {isRemote && (
+                            <span className="relative flex-shrink-0" title={remoteTooltip}>
+                              <Server className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span
+                                className={cn(
+                                  'absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background',
+                                  remoteStatusDotClass,
+                                )}
+                              />
+                            </span>
+                          )}
+                          <h3 className="truncate text-sm font-medium text-foreground">{project.displayName}</h3>
+                        </div>
                         {tasksEnabled && (
                           <TaskIndicator
                             status={taskStatus}
@@ -338,8 +381,21 @@ export default function SidebarProjectItem({
                 </div>
               ) : (
                 <div>
-                  <div className="truncate text-sm font-semibold text-foreground" title={project.displayName}>
-                    {project.displayName}
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    {isRemote && (
+                      <span className="relative flex-shrink-0" title={remoteTooltip}>
+                        <Server className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span
+                          className={cn(
+                            'absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background',
+                            remoteStatusDotClass,
+                          )}
+                        />
+                      </span>
+                    )}
+                    <div className="truncate text-sm font-semibold text-foreground" title={project.displayName}>
+                      {project.displayName}
+                    </div>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {sessionCountDisplay}

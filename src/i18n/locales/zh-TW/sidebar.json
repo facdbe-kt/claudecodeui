@@ -132,5 +132,45 @@
     "deleteAllData": "永久刪除所有資料",
     "allConversationsDeleted": "專案將從側邊欄中移除。您的檔案、記憶和工作階段資料將會保留。",
     "cannotUndo": "您可以稍後重新新增此專案。"
+  },
+  "remoteProject": {
+    "title": "Remote Project",
+    "addRemoteProject": "Add Remote Project",
+    "editRemoteConfig": "Edit Remote Config",
+    "host": "Host",
+    "port": "Port",
+    "user": "User",
+    "remotePath": "Remote Path",
+    "authType": "Authentication Type",
+    "authKey": "SSH Key",
+    "authPassword": "Password",
+    "uploadKey": "Upload Key",
+    "pasteKey": "Paste Key",
+    "browse": "Browse",
+    "selectFolder": "Select Folder",
+    "testConnection": "Test Connection",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remoteLabel": "Remote SSH project",
+    "connectionStatus": {
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "connecting": "Connecting...",
+      "error": "Connection Error",
+      "unknown": "Status unknown"
+    },
+    "errors": {
+      "invalidHost": "Please enter a valid host",
+      "invalidPort": "Please enter a valid port",
+      "invalidPath": "Please enter a valid remote path",
+      "emptyCredential": "Please provide a credential",
+      "connectionFailed": "Connection failed",
+      "authFailed": "Authentication failed"
+    },
+    "success": {
+      "connectionSuccess": "Connection successful",
+      "projectCreated": "Remote project created",
+      "projectUpdated": "Remote project updated"
+    }
   }
 }

@@ -7,6 +7,10 @@ import type {
   CreateProjectResponse,
   CredentialsResponse,
   FolderSuggestion,
+  RemoteBrowseEntry,
+  RemoteBrowseResponse,
+  RemoteCreateResponse,
+  RemoteTestResponse,
   TokenMode,
 } from '../types';
 
@@ -109,6 +113,84 @@ export const createProjectRequest = async (payload: CreateProjectPayload) => {
   }
 
   return data.project;
+};
+
+type RemoteConnectionParams = {
+  remote_host: string;
+  remote_port: number;
+  remote_user: string;
+  remote_path: string;
+  remote_auth_type: 'key' | 'password';
+  credential: string;
+};
+
+const resolveRemoteErrorMessage = (responseData: RemoteCreateResponse): string | null => {
+  if (typeof responseData.details === 'string' && responseData.details.trim().length > 0) {
+    return responseData.details;
+  }
+  if (typeof responseData.error === 'string' && responseData.error.trim().length > 0) {
+    return responseData.error;
+  }
+  if (
+    responseData.error
+    && typeof responseData.error === 'object'
+    && typeof responseData.error.message === 'string'
+    && responseData.error.message.trim().length > 0
+  ) {
+    return responseData.error.message;
+  }
+  if (typeof responseData.message === 'string' && responseData.message.trim().length > 0) {
+    return responseData.message;
+  }
+  return null;
+};
+
+export const testRemoteConnection = async (params: RemoteConnectionParams) => {
+  const response = await api.remoteProjects.test(params);
+  const data = await parseJson<RemoteTestResponse>(response);
+
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || 'Connection failed');
+  }
+
+  return data;
+};
+
+export const browseRemoteFolders = async (
+  params: RemoteConnectionParams & { browsePath: string },
+) => {
+  const response = await api.remoteProjects.browse({
+    host: params.remote_host,
+    port: params.remote_port,
+    user: params.remote_user,
+    path: params.remote_path,
+    authType: params.remote_auth_type,
+    credential: params.credential,
+    browsePath: params.browsePath,
+  });
+  const data = await parseJson<RemoteBrowseResponse>(response);
+
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to browse remote folders');
+  }
+
+  return {
+    path: data.path || params.browsePath,
+    entries: (data.entries || []) as RemoteBrowseEntry[],
+  };
+};
+
+export const createRemoteProject = async (
+  params: RemoteConnectionParams & { customProjectName: string },
+) => {
+  const response = await api.remoteProjects.create(params);
+  const data = await parseJson<RemoteCreateResponse>(response);
+
+  if (!response.ok) {
+    throw new Error(resolveRemoteErrorMessage(data) || 'Failed to create remote project');
+  }
+
+  return data.project ?? (data as Record<string, unknown>);
 };
 
 const buildCloneProgressQuery = ({

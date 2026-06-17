@@ -64,3 +64,41 @@ export type WizardFormState = {
   selectedGithubToken: string;
   newGithubToken: string;
 };
+
+export type ProjectKind = 'local' | 'remote';
+
+export type RemoteAuthType = 'key' | 'password';
+
+export type RemoteProjectFormState = {
+  customProjectName: string;
+  remote_host: string;
+  remote_port: string;
+  remote_user: string;
+  remote_path: string;
+  remote_auth_type: RemoteAuthType;
+  credential: string;
+};
+
+export type RemoteTestResponse = {
+  ok?: boolean;
+  error?: string;
+};
+
+export type RemoteBrowseEntry = {
+  name: string;
+  isDirectory: boolean;
+};
+
+export type RemoteBrowseResponse = {
+  path?: string;
+  entries?: RemoteBrowseEntry[];
+  error?: string;
+};
+
+export type RemoteCreateResponse = {
+  success?: boolean;
+  project?: Record<string, unknown>;
+  error?: string | { message?: string };
+  details?: string;
+  message?: string;
+};

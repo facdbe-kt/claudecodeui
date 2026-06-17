@@ -133,5 +133,45 @@
     "deleteAllData": "永久删除所有数据",
     "allConversationsDeleted": "项目将从侧边栏中移除。您的文件、记忆和会话数据将会保留。",
     "cannotUndo": "您可以稍后重新添加此项目。"
+  },
+  "remoteProject": {
+    "title": "远程项目",
+    "addRemoteProject": "添加远程项目",
+    "editRemoteConfig": "编辑远程配置",
+    "host": "主机",
+    "port": "端口",
+    "user": "用户",
+    "remotePath": "远程路径",
+    "authType": "认证方式",
+    "authKey": "SSH 密钥",
+    "authPassword": "密码",
+    "uploadKey": "上传密钥",
+    "pasteKey": "粘贴密钥",
+    "browse": "浏览",
+    "selectFolder": "选择文件夹",
+    "testConnection": "测试连接",
+    "save": "保存",
+    "cancel": "取消",
+    "remoteLabel": "远程 SSH 项目",
+    "connectionStatus": {
+      "connected": "已连接",
+      "disconnected": "已断开",
+      "connecting": "连接中...",
+      "error": "连接错误",
+      "unknown": "状态未知"
+    },
+    "errors": {
+      "invalidHost": "请输入有效的主机地址",
+      "invalidPort": "请输入有效的端口",
+      "invalidPath": "请输入有效的远程路径",
+      "emptyCredential": "请提供凭证",
+      "connectionFailed": "连接失败",
+      "authFailed": "认证失败"
+    },
+    "success": {
+      "connectionSuccess": "连接成功",
+      "projectCreated": "远程项目已创建",
+      "projectUpdated": "远程项目已更新"
+    }
   }
 }

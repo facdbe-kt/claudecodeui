@@ -194,7 +194,8 @@ export const projectsDb = {
     getProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
         return db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, group_id
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, group_id,
+                   project_type, remote_host, remote_port, remote_user, remote_path
             FROM projects
             WHERE isArchived = 0
         `).all() as ProjectRepositoryRow[];
@@ -207,7 +208,8 @@ export const projectsDb = {
     getArchivedProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
         return db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, group_id
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, group_id,
+                   project_type, remote_host, remote_port, remote_user, remote_path
             FROM projects
             WHERE isArchived = 1
         `).all() as ProjectRepositoryRow[];

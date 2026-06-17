@@ -120,5 +120,45 @@
     "deleteAllData": "모든 데이터 영구 삭제",
     "allConversationsDeleted": "프로젝트가 사이드바에서 제거됩니다. 파일, 메모리 및 세션 데이터는 보존됩니다.",
     "cannotUndo": "나중에 프로젝트를 다시 추가할 수 있습니다."
+  },
+  "remoteProject": {
+    "title": "Remote Project",
+    "addRemoteProject": "Add Remote Project",
+    "editRemoteConfig": "Edit Remote Config",
+    "host": "Host",
+    "port": "Port",
+    "user": "User",
+    "remotePath": "Remote Path",
+    "authType": "Authentication Type",
+    "authKey": "SSH Key",
+    "authPassword": "Password",
+    "uploadKey": "Upload Key",
+    "pasteKey": "Paste Key",
+    "browse": "Browse",
+    "selectFolder": "Select Folder",
+    "testConnection": "Test Connection",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remoteLabel": "Remote SSH project",
+    "connectionStatus": {
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "connecting": "Connecting...",
+      "error": "Connection Error",
+      "unknown": "Status unknown"
+    },
+    "errors": {
+      "invalidHost": "Please enter a valid host",
+      "invalidPort": "Please enter a valid port",
+      "invalidPath": "Please enter a valid remote path",
+      "emptyCredential": "Please provide a credential",
+      "connectionFailed": "Connection failed",
+      "authFailed": "Authentication failed"
+    },
+    "success": {
+      "connectionSuccess": "Connection successful",
+      "projectCreated": "Remote project created",
+      "projectUpdated": "Remote project updated"
+    }
   }
 }

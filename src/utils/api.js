@@ -215,6 +215,41 @@ export const api = {
       }),
   },
 
+  // Remote SSH project endpoints. Note: create is POST /api/remote-projects
+  // (no /create suffix) and remove uses DELETE.
+  remoteProjects: {
+    test: (body) =>
+      authenticatedFetch('/api/remote-projects/test', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    browse: (body) =>
+      authenticatedFetch('/api/remote-projects/browse', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    create: (body) =>
+      authenticatedFetch('/api/remote-projects', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    update: (projectId, body) =>
+      authenticatedFetch(`/api/remote-projects/${encodeURIComponent(projectId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    remove: (projectId) =>
+      authenticatedFetch(`/api/remote-projects/${encodeURIComponent(projectId)}`, {
+        method: 'DELETE',
+      }),
+    status: (projectId) =>
+      authenticatedFetch(`/api/remote-projects/${encodeURIComponent(projectId)}/status`),
+    reconnect: (projectId) =>
+      authenticatedFetch(`/api/remote-projects/${encodeURIComponent(projectId)}/reconnect`, {
+        method: 'POST',
+      }),
+  },
+
   // Browse filesystem for project suggestions
   browseFilesystem: (dirPath = null) => {
     const params = new URLSearchParams();

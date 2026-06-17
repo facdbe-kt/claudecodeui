@@ -8,6 +8,7 @@ export type AuthCopyStatus = 'idle' | 'copied' | 'failed';
 
 export type ShellInitMessage = {
   type: 'init';
+  projectId?: string;
   projectPath: string;
   sessionId: string | null;
   hasSession: boolean;

@@ -149,6 +149,9 @@ export function useShellConnection({
 
             sendSocketMessage(socket, {
               type: 'init',
+              // projectId lets the backend switch to a remote SSH shell for
+              // remote projects; harmless for local projects (backend ignores it).
+              projectId: currentProject.projectId,
               projectPath: currentProject.fullPath || currentProject.path || '',
               sessionId: isPlainShellRef.current ? null : selectedSessionRef.current?.id || null,
               hasSession: isPlainShellRef.current ? false : Boolean(selectedSessionRef.current),
@@ -166,7 +169,9 @@ export function useShellConnection({
                   if (saved) {
                     return Boolean(JSON.parse(saved).skipPermissions);
                   }
-                } catch {}
+                } catch {
+                  /* malformed settings JSON — fall through to default */
+                }
                 return false;
               })(),
             });

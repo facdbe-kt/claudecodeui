@@ -67,6 +67,14 @@ export interface Project {
   opencodeSessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
   taskmaster?: ProjectTaskmasterInfo;
+  // Remote SSH project metadata. `project_type` defaults to "local" when the
+  // backend omits it; remote_* fields are only populated for remote projects.
+  project_type?: 'local' | 'remote';
+  remote_host?: string;
+  remote_port?: number;
+  remote_user?: string;
+  remote_path?: string;
+  connection_status?: 'connected' | 'disconnected' | 'connecting' | 'error';
   [key: string]: unknown;
 }
 

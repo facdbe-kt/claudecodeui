@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
-import { FolderPlus, X } from 'lucide-react';
+import { FolderPlus, Server, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ErrorBanner from './components/ErrorBanner';
+import RemoteProjectForm from './components/RemoteProjectForm';
 import StepConfiguration from './components/StepConfiguration';
 import StepReview from './components/StepReview';
 import WizardFooter from './components/WizardFooter';
@@ -9,7 +10,7 @@ import WizardProgress from './components/WizardProgress';
 import { useGithubTokens } from './hooks/useGithubTokens';
 import { cloneWorkspaceWithProgress, createProjectRequest } from './data/workspaceApi';
 import { isCloneWorkflow, shouldShowGithubAuthentication } from './utils/pathUtils';
-import type { TokenMode, WizardFormState, WizardStep } from './types';
+import type { ProjectKind, TokenMode, WizardFormState, WizardStep } from './types';
 
 type ProjectCreationWizardProps = {
   onClose: () => void;
@@ -29,6 +30,7 @@ export default function ProjectCreationWizard({
   onProjectCreated,
 }: ProjectCreationWizardProps) {
   const { t } = useTranslation();
+  const [projectKind, setProjectKind] = useState<ProjectKind>('local');
   const [step, setStep] = useState<WizardStep>(1);
   const [formState, setFormState] = useState<WizardFormState>(initialFormState);
   const [isCreating, setIsCreating] = useState(false);
@@ -150,12 +152,49 @@ export default function ProjectCreationWizard({
           </button>
         </div>
 
-        <WizardProgress step={step} />
+        <div className="px-6 pt-4">
+          <div className="flex rounded-lg bg-gray-100 p-0.5 dark:bg-gray-700">
+            <button
+              type="button"
+              onClick={() => setProjectKind('local')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
+                projectKind === 'local'
+                  ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-900 dark:text-white'
+                  : 'text-gray-500 dark:text-gray-400'
+              }`}
+              disabled={isCreating}
+            >
+              <FolderPlus className="h-4 w-4" />
+              {t('projects.newProject')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setProjectKind('remote')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
+                projectKind === 'remote'
+                  ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-900 dark:text-white'
+                  : 'text-gray-500 dark:text-gray-400'
+              }`}
+              disabled={isCreating}
+            >
+              <Server className="h-4 w-4" />
+              {t('remoteProject.addRemoteProject')}
+            </button>
+          </div>
+        </div>
 
-        <div className="min-h-[300px] space-y-6 p-6">
-          {error && <ErrorBanner message={error} />}
+        {projectKind === 'remote' ? (
+          <div className="space-y-6 p-6">
+            <RemoteProjectForm onClose={onClose} onProjectCreated={onProjectCreated} />
+          </div>
+        ) : (
+          <>
+            <WizardProgress step={step} />
 
-          {step === 1 && (
+            <div className="min-h-[300px] space-y-6 p-6">
+              {error && <ErrorBanner message={error} />}
+
+              {step === 1 && (
             <StepConfiguration
               workspacePath={formState.workspacePath}
               githubUrl={formState.githubUrl}
@@ -189,15 +228,17 @@ export default function ProjectCreationWizard({
           )}
         </div>
 
-        <WizardFooter
-          step={step}
-          isCreating={isCreating}
-          isCloneWorkflow={shouldCloneRepository}
-          onClose={onClose}
-          onBack={handleBack}
-          onNext={handleNext}
-          onCreate={handleCreate}
-        />
+            <WizardFooter
+              step={step}
+              isCreating={isCreating}
+              isCloneWorkflow={shouldCloneRepository}
+              onClose={onClose}
+              onBack={handleBack}
+              onNext={handleNext}
+              onCreate={handleCreate}
+            />
+          </>
+        )}
       </div>
     </div>
   );

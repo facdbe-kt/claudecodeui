@@ -31,6 +31,11 @@ export type ProjectListItem = {
   fullPath: string;
   isStarred: boolean;
   groupId: string | null;
+  project_type: 'local' | 'remote';
+  remote_host: string | null;
+  remote_port: number | null;
+  remote_user: string | null;
+  remote_path: string | null;
   sessions: SessionSummary[];
   cursorSessions: SessionSummary[];
   codexSessions: SessionSummary[];
@@ -220,6 +225,11 @@ export async function getProjectsWithSessions(
     custom_project_name?: string | null;
     isStarred?: number;
     group_id?: string | null;
+    project_type?: 'local' | 'remote' | null;
+    remote_host?: string | null;
+    remote_port?: number | null;
+    remote_user?: string | null;
+    remote_path?: string | null;
   }>;
   const totalProjects = projectRows.length;
   const projects: ProjectListItem[] = [];
@@ -255,6 +265,11 @@ export async function getProjectsWithSessions(
       fullPath: projectPath,
       isStarred: Boolean(row.isStarred),
       groupId: row.group_id ?? null,
+      project_type: row.project_type ?? 'local',
+      remote_host: row.remote_host ?? null,
+      remote_port: row.remote_port ?? null,
+      remote_user: row.remote_user ?? null,
+      remote_path: row.remote_path ?? null,
       sessions: sessionsPage.sessionsByProvider.claude,
       cursorSessions: sessionsPage.sessionsByProvider.cursor,
       codexSessions: sessionsPage.sessionsByProvider.codex,
@@ -293,6 +308,11 @@ export async function getArchivedProjectsWithSessions(
     project_path: string;
     custom_project_name?: string | null;
     isStarred?: number;
+    project_type?: 'local' | 'remote' | null;
+    remote_host?: string | null;
+    remote_port?: number | null;
+    remote_user?: string | null;
+    remote_path?: string | null;
   }>;
 
   const archivedProjects: ArchivedProjectListItem[] = [];
@@ -312,6 +332,11 @@ export async function getArchivedProjectsWithSessions(
       fullPath: row.project_path,
       isStarred: Boolean(row.isStarred),
       groupId: null,
+      project_type: row.project_type ?? 'local',
+      remote_host: row.remote_host ?? null,
+      remote_port: row.remote_port ?? null,
+      remote_user: row.remote_user ?? null,
+      remote_path: row.remote_path ?? null,
       isArchived: true,
       sessions: sessionsPage.sessionsByProvider.claude,
       cursorSessions: sessionsPage.sessionsByProvider.cursor,
