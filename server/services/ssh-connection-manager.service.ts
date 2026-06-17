@@ -24,6 +24,9 @@ import { Client } from 'ssh2';
 import type { ConnectConfig } from 'ssh2';
 import { EventEmitter } from 'node:events';
 import crypto from 'crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { credentialsDb } from '@/modules/database/index.js';
 import type { RemoteProjectConfig } from '@/shared/types.js';
@@ -510,8 +513,44 @@ class SSHConnectionManager extends EventEmitter {
    * Builds the ssh2 ConnectConfig, decrypting the referenced credential. The
    * decrypted secret is used only here and is never stored on the wrapper or
    * logged.
+   *
+   * For `authType === 'agent'` no per-project credential is read. Instead the
+   * server authenticates with its own SSH agent (when `SSH_AUTH_SOCK` is set)
+   * and/or the first default private key found in the server's `~/.ssh`.
    */
   private buildConnectConfig(config: RemoteProjectConfig): ConnectConfig {
+    const base: ConnectConfig = {
+      host: config.host,
+      port: config.port,
+      username: config.user,
+      readyTimeout: READY_TIMEOUT_MS,
+      keepaliveInterval: KEEPALIVE_INTERVAL_MS,
+    };
+
+    if (config.authType === 'agent') {
+      let hasAuth = false;
+
+      const authSock = process.env.SSH_AUTH_SOCK;
+      if (authSock) {
+        base.agent = authSock;
+        hasAuth = true;
+      }
+
+      const defaultKey = this.readDefaultLocalKey();
+      if (defaultKey) {
+        base.privateKey = defaultKey;
+        hasAuth = true;
+      }
+
+      if (!hasAuth) {
+        throw new Error(
+          'No local SSH agent or default key found for agent auth.'
+        );
+      }
+
+      return base;
+    }
+
     const credentialId = Number(config.credentialRef);
     if (!Number.isFinite(credentialId)) {
       throw new Error('Invalid credential reference for remote project.');
@@ -522,14 +561,6 @@ class SSHConnectionManager extends EventEmitter {
       throw new Error('Remote credential not found.');
     }
 
-    const base: ConnectConfig = {
-      host: config.host,
-      port: config.port,
-      username: config.user,
-      readyTimeout: READY_TIMEOUT_MS,
-      keepaliveInterval: KEEPALIVE_INTERVAL_MS,
-    };
-
     if (config.authType === 'key') {
       base.privateKey = credential.value;
     } else {
@@ -537,6 +568,27 @@ class SSHConnectionManager extends EventEmitter {
     }
 
     return base;
+  }
+
+  /**
+   * Reads the first existing default private key from the server's `~/.ssh`
+   * (id_rsa, id_ed25519, id_ecdsa) and returns its contents, or null when none
+   * exist. Used for `agent` auth so it works even without a running SSH agent.
+   */
+  private readDefaultLocalKey(): string | null {
+    const sshDir = path.join(os.homedir(), '.ssh');
+    const candidates = ['id_rsa', 'id_ed25519', 'id_ecdsa'];
+    for (const name of candidates) {
+      const keyPath = path.join(sshDir, name);
+      try {
+        if (fs.existsSync(keyPath)) {
+          return fs.readFileSync(keyPath, 'utf8');
+        }
+      } catch {
+        /* unreadable key file — try the next candidate */
+      }
+    }
+    return null;
   }
 
   /**

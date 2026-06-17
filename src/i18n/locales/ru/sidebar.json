@@ -151,6 +151,7 @@
     "authType": "Authentication Type",
     "authKey": "SSH Key",
     "authPassword": "Password",
+    "authAgent": "Use local SSH key / agent",
     "uploadKey": "Upload Key",
     "pasteKey": "Paste Key",
     "browse": "Browse",

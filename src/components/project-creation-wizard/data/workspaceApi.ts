@@ -120,8 +120,9 @@ type RemoteConnectionParams = {
   remote_port: number;
   remote_user: string;
   remote_path: string;
-  remote_auth_type: 'key' | 'password';
-  credential: string;
+  remote_auth_type: 'key' | 'password' | 'agent';
+  // Optional: 'agent' auth sends no credential (server uses its own key/agent).
+  credential?: string;
 };
 
 const resolveRemoteErrorMessage = (responseData: RemoteCreateResponse): string | null => {

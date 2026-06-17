@@ -67,7 +67,7 @@ export type WizardFormState = {
 
 export type ProjectKind = 'local' | 'remote';
 
-export type RemoteAuthType = 'key' | 'password';
+export type RemoteAuthType = 'key' | 'password' | 'agent';
 
 export type RemoteProjectFormState = {
   customProjectName: string;

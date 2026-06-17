@@ -476,8 +476,11 @@ export type ProjectType = 'local' | 'remote';
 
 /**
  * Authentication mechanism used when connecting to a remote project host.
+ *
+ * `agent` authenticates using the server's own SSH agent and/or default local
+ * key files (~/.ssh) and stores no per-project credential.
  */
-export type RemoteAuthType = 'key' | 'password';
+export type RemoteAuthType = 'key' | 'password' | 'agent';
 
 /**
  * Normalized remote SSH connection config derived from a project's `remote_*`
@@ -485,6 +488,8 @@ export type RemoteAuthType = 'key' | 'password';
  *
  * `credentialRef` references a stored credential id (see `user_credentials`)
  * holding the private key or password rather than embedding the secret here.
+ * For `authType === 'agent'` no credential is stored, so `credentialRef` is an
+ * empty string or `null`.
  */
 export type RemoteProjectConfig = {
   host: string;
@@ -492,7 +497,7 @@ export type RemoteProjectConfig = {
   user: string;
   path: string;
   authType: RemoteAuthType;
-  credentialRef: string;
+  credentialRef: string | null;
 };
 
 /**

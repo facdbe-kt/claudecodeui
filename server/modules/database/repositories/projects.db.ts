@@ -22,7 +22,8 @@ export type CreateRemoteProjectInput = {
     user: string;
     remotePath: string;
     authType: RemoteAuthType;
-    credentialRef: string;
+    /** `null` for `authType === 'agent'` (no stored credential). */
+    credentialRef: string | null;
 };
 
 const REMOTE_PROJECT_COLUMNS =

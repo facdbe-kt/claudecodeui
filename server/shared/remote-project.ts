@@ -21,6 +21,7 @@ export function rowToRemoteConfig(row: ProjectRepositoryRow): RemoteProjectConfi
     user: row.remote_user ?? '',
     path: row.remote_path ?? '',
     authType: row.remote_auth_type ?? 'key',
+    // `agent` rows store no credential, so a null ref maps cleanly to ''.
     credentialRef: row.remote_credential_ref ?? '',
   };
 }

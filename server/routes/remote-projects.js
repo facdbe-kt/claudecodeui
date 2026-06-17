@@ -21,7 +21,7 @@ import { rowToRemoteConfig } from '../shared/remote-project.js';
 
 const router = express.Router();
 
-const VALID_AUTH_TYPES = new Set(['key', 'password']);
+const VALID_AUTH_TYPES = new Set(['key', 'password', 'agent']);
 
 /**
  * Rejects shell-unsafe paths. The value is later single-quoted before being
@@ -66,7 +66,7 @@ function parseConnectionFields({ host, port, user, authType }) {
   }
 
   if (!VALID_AUTH_TYPES.has(authType)) {
-    return { error: "remote_auth_type must be 'key' or 'password'." };
+    return { error: "remote_auth_type must be 'key', 'password', or 'agent'." };
   }
 
   return {
@@ -104,6 +104,10 @@ function loadOwnedRemoteProject(projectId, userId) {
   if (row.project_type !== 'remote') {
     return { status: 404, error: 'Project is not a remote project.' };
   }
+  // 'agent' projects store no credential, so there is nothing to own-check.
+  if (row.remote_auth_type === 'agent') {
+    return { row, config: rowToRemoteConfig(row), credentialId: null };
+  }
   const credentialId = assertCredentialOwnership(row.remote_credential_ref, userId);
   if (credentialId === null) {
     return { status: 404, error: 'Project not found.' };
@@ -128,6 +132,22 @@ router.post('/test', async (req, res) => {
   if (parsed.error) {
     return res.status(400).json({ error: parsed.error });
   }
+
+  // 'agent' auth uses the server's own SSH agent / default keys: no credential.
+  if (remote_auth_type === 'agent') {
+    try {
+      const result = await sshConnectionManager.testConnection({
+        ...parsed.config,
+        path: '',
+        credentialRef: null,
+      });
+      return res.json(result);
+    } catch (error) {
+      console.error('Error testing remote connection:', error);
+      return res.status(500).json({ error: 'Failed to test connection.' });
+    }
+  }
+
   if (typeof credential !== 'string' || credential.length === 0) {
     return res.status(400).json({ error: 'credential is required.' });
   }
@@ -176,7 +196,8 @@ router.post('/browse', async (req, res) => {
   if (parsed.error) {
     return res.status(400).json({ error: parsed.error });
   }
-  if (typeof credential !== 'string' || credential.length === 0) {
+  const isAgent = authType === 'agent';
+  if (!isAgent && (typeof credential !== 'string' || credential.length === 0)) {
     return res.status(400).json({ error: 'credential is required.' });
   }
 
@@ -189,18 +210,22 @@ router.post('/browse', async (req, res) => {
   let tempCredentialId = null;
   const ephemeralProjectId = `__browse__:${randomUUID()}`;
   try {
-    const created = credentialsDb.createRemoteCredential(
-      req.user.id,
-      `__browse__:${randomUUID()}`,
-      authType === 'key' ? 'ssh_key' : 'ssh_password',
-      credential
-    );
-    tempCredentialId = Number(created.id);
+    // 'agent' auth stores no credential: the server authenticates with its own
+    // SSH agent / default keys.
+    if (!isAgent) {
+      const created = credentialsDb.createRemoteCredential(
+        req.user.id,
+        `__browse__:${randomUUID()}`,
+        authType === 'key' ? 'ssh_key' : 'ssh_password',
+        credential
+      );
+      tempCredentialId = Number(created.id);
+    }
 
     const config = {
       ...parsed.config,
       path: targetPath,
-      credentialRef: String(tempCredentialId),
+      credentialRef: tempCredentialId !== null ? String(tempCredentialId) : null,
     };
 
     // List one level: trailing slash on names marks directories (ls -p), and -A
@@ -275,7 +300,8 @@ router.post('/', async (req, res) => {
   if (typeof remote_path !== 'string' || remote_path.trim().length === 0) {
     return res.status(400).json({ error: 'remote_path is required.' });
   }
-  if (typeof credential !== 'string' || credential.length === 0) {
+  const isAgent = remote_auth_type === 'agent';
+  if (!isAgent && (typeof credential !== 'string' || credential.length === 0)) {
     return res.status(400).json({ error: 'credential is required.' });
   }
 
@@ -283,25 +309,31 @@ router.post('/', async (req, res) => {
 
   let credentialId = null;
   try {
-    const created = credentialsDb.createRemoteCredential(
-      req.user.id,
-      typeof customProjectName === 'string' && customProjectName.trim().length > 0
-        ? customProjectName.trim()
-        : `${parsed.config.user}@${parsed.config.host}`,
-      remote_auth_type === 'key' ? 'ssh_key' : 'ssh_password',
-      credential
-    );
-    credentialId = Number(created.id);
+    // 'agent' auth stores no credential: credentialRef stays null and the
+    // server authenticates with its own SSH agent / default keys.
+    if (!isAgent) {
+      const created = credentialsDb.createRemoteCredential(
+        req.user.id,
+        typeof customProjectName === 'string' && customProjectName.trim().length > 0
+          ? customProjectName.trim()
+          : `${parsed.config.user}@${parsed.config.host}`,
+        remote_auth_type === 'key' ? 'ssh_key' : 'ssh_password',
+        credential
+      );
+      credentialId = Number(created.id);
+    }
 
     const testResult = await sshConnectionManager.testConnection({
       ...parsed.config,
       path: remotePath,
-      credentialRef: String(credentialId),
+      credentialRef: credentialId !== null ? String(credentialId) : null,
     });
 
     if (!testResult.ok) {
-      credentialsDb.deleteRemoteCredential(credentialId);
-      credentialId = null;
+      if (credentialId !== null) {
+        credentialsDb.deleteRemoteCredential(credentialId);
+        credentialId = null;
+      }
       return res.status(400).json({ error: testResult.error || 'Connection test failed.' });
     }
 
@@ -313,7 +345,7 @@ router.post('/', async (req, res) => {
       user: parsed.config.user,
       remotePath,
       authType: parsed.config.authType,
-      credentialRef: String(credentialId),
+      credentialRef: credentialId !== null ? String(credentialId) : null,
     });
 
     return res.status(201).json({ project: toPublicProject(row) });
@@ -360,10 +392,12 @@ router.put('/:projectId', async (req, res) => {
     return res.status(400).json({ error: 'remote_path is required.' });
   }
   const remotePath = remote_path.trim();
+  const isAgent = owned.row.remote_auth_type === 'agent';
 
   try {
-    // Re-encrypt the credential first if a new secret was supplied.
-    if (credential !== undefined && credential !== null && credential !== '') {
+    // Re-encrypt the credential first if a new secret was supplied. 'agent'
+    // projects store no credential, so any supplied credential is ignored.
+    if (!isAgent && credential !== undefined && credential !== null && credential !== '') {
       if (typeof credential !== 'string') {
         return res.status(400).json({ error: 'credential must be a string.' });
       }
@@ -373,7 +407,7 @@ router.put('/:projectId', async (req, res) => {
     const testResult = await sshConnectionManager.testConnection({
       ...parsed.config,
       path: remotePath,
-      credentialRef: String(owned.credentialId),
+      credentialRef: owned.credentialId !== null ? String(owned.credentialId) : null,
     });
     if (!testResult.ok) {
       return res.status(400).json({ error: testResult.error || 'Connection test failed.' });

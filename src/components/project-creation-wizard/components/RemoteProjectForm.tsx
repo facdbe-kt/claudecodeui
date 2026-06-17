@@ -58,7 +58,8 @@ export default function RemoteProjectForm({
     if (!formState.remote_user.trim()) {
       return t('remoteProject.errors.invalidHost');
     }
-    if (!formState.credential.trim()) {
+    // 'agent' auth uses the server's own SSH key/agent: no credential needed.
+    if (formState.remote_auth_type !== 'agent' && !formState.credential.trim()) {
       return t('remoteProject.errors.emptyCredential');
     }
     if (!formState.remote_path.trim()) {
@@ -74,7 +75,9 @@ export default function RemoteProjectForm({
       remote_user: formState.remote_user.trim(),
       remote_path: formState.remote_path.trim(),
       remote_auth_type: formState.remote_auth_type,
-      credential: formState.credential,
+      // 'agent' auth uses the server's own SSH key/agent: send no credential.
+      credential:
+        formState.remote_auth_type === 'agent' ? '' : formState.credential,
     }),
     [formState, portNumber],
   );
@@ -250,37 +253,51 @@ export default function RemoteProjectForm({
             >
               {t('remoteProject.authPassword')}
             </button>
+            <button
+              type="button"
+              onClick={() => updateField('remote_auth_type', 'agent' as RemoteAuthType)}
+              className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
+                formState.remote_auth_type === 'agent'
+                  ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-900 dark:text-white'
+                  : 'text-gray-500 dark:text-gray-400'
+              }`}
+              disabled={busy}
+            >
+              {t('remoteProject.authAgent')}
+            </button>
           </div>
         </div>
 
-        <div>
-          <label className={fieldLabelClass}>
-            {formState.remote_auth_type === 'key'
-              ? t('remoteProject.pasteKey')
-              : t('remoteProject.authPassword')}
-          </label>
-          {formState.remote_auth_type === 'key' ? (
-            <textarea
-              value={formState.credential}
-              onChange={(event) => updateField('credential', event.target.value)}
-              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-              rows={5}
-              spellCheck={false}
-              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={busy}
-            />
-          ) : (
-            <Input
-              type="password"
-              value={formState.credential}
-              onChange={(event) => updateField('credential', event.target.value)}
-              placeholder="••••••••"
-              className="w-full"
-              autoComplete="new-password"
-              disabled={busy}
-            />
-          )}
-        </div>
+        {formState.remote_auth_type !== 'agent' && (
+          <div>
+            <label className={fieldLabelClass}>
+              {formState.remote_auth_type === 'key'
+                ? t('remoteProject.pasteKey')
+                : t('remoteProject.authPassword')}
+            </label>
+            {formState.remote_auth_type === 'key' ? (
+              <textarea
+                value={formState.credential}
+                onChange={(event) => updateField('credential', event.target.value)}
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                rows={5}
+                spellCheck={false}
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+              />
+            ) : (
+              <Input
+                type="password"
+                value={formState.credential}
+                onChange={(event) => updateField('credential', event.target.value)}
+                placeholder="••••••••"
+                className="w-full"
+                autoComplete="new-password"
+                disabled={busy}
+              />
+            )}
+          </div>
+        )}
 
         <div>
           <label className={fieldLabelClass}>{t('remoteProject.remotePath')}</label>
