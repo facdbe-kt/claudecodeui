@@ -1,0 +1,49 @@
+{
+  "_readme": [
+    "Representative remote SSH project configurations for Claude Code UI.",
+    "JSON has no comments, so this file documents the fields in '_fields' and",
+    "shows one example per authentication mode under 'examples'. You do NOT edit",
+    "this file to create a project — create remote projects through the UI",
+    "(New Project -> Add Remote Project). These values map to the fields that the",
+    "wizard sends to POST /api/remote-projects and to the projects table columns",
+    "(remote_host, remote_port, remote_user, remote_path, remote_auth_type, ...).",
+    "See docs/remote-ssh-projects.md for the full guide."
+  ],
+  "_fields": {
+    "customProjectName": "Optional display name shown in the sidebar.",
+    "remote_host": "Hostname or IP of the remote host.",
+    "remote_port": "SSH port (integer 1-65535). Defaults to 22.",
+    "remote_user": "SSH username to log in as.",
+    "remote_path": "Absolute path to the project folder on the remote host. All remote file/terminal/chat operations stay under this path.",
+    "remote_auth_type": "'key' (paste a private key), 'password' (paste a password), or 'agent' (use the server's SSH agent / default ~/.ssh key; no stored credential).",
+    "credential": "Only for 'key' or 'password' modes: the private key text or the password. Stored encrypted at rest (AES-256-GCM). NEVER returned to the client. Omitted entirely for 'agent' mode."
+  },
+  "examples": {
+    "private_key": {
+      "customProjectName": "api-server (key auth)",
+      "remote_host": "10.77.110.165",
+      "remote_port": 22,
+      "remote_user": "zyx",
+      "remote_path": "/home/zyx/projects/api-server",
+      "remote_auth_type": "key",
+      "credential": "-----BEGIN OPENSSH PRIVATE KEY-----\n...paste the private key here...\n-----END OPENSSH PRIVATE KEY-----"
+    },
+    "password": {
+      "customProjectName": "build-box (password auth)",
+      "remote_host": "build.example.com",
+      "remote_port": 2222,
+      "remote_user": "deploy",
+      "remote_path": "/srv/app",
+      "remote_auth_type": "password",
+      "credential": "your-ssh-password-here"
+    },
+    "agent": {
+      "customProjectName": "dev-vm (local agent / default key)",
+      "remote_host": "dev-vm.internal",
+      "remote_port": 22,
+      "remote_user": "ubuntu",
+      "remote_path": "/home/ubuntu/workspace",
+      "remote_auth_type": "agent"
+    }
+  }
+}

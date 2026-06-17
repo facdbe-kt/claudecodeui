@@ -277,7 +277,7 @@ function emitShellOutputChunk(
  * Single-quoting neutralizes every shell metacharacter except `'` itself, which
  * we escape with the standard `'\''` close/escape/reopen idiom.
  */
-function quoteRemotePathForShell(remotePath: string): string {
+export function quoteRemotePathForShell(remotePath: string): string {
   // Reject control chars (incl. newline/CR/tab), backticks, and `$(`; the
   // single-quote wrapper below neutralizes every other shell metacharacter.
   // eslint-disable-next-line no-control-regex
@@ -293,7 +293,7 @@ function quoteRemotePathForShell(remotePath: string): string {
  * `'\''` close/escape/reopen idiom so embedded single quotes (such as those
  * produced by {@link quoteRemotePathForShell}) survive the extra nesting.
  */
-function singleQuoteForShell(value: string): string {
+export function singleQuoteForShell(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 

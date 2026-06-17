@@ -3,6 +3,16 @@
 All notable changes to CloudCLI UI will be documented in this file.
 
 
+## [](https://github.com/siteboon/claudecodeui/compare/v1.33.3...vnull) (2026-06-17)
+
+### New Features
+
+* **remote-ssh:** add Remote SSH Projects — run a project's files, terminal, and Claude chat on a remote host over SSH. Adds `project_type` (`local`/`remote`) plus `remote_host`/`remote_port`/`remote_user`/`remote_path`/`remote_auth_type`/`remote_credential_ref` columns (backward compatible; existing projects default to `local`). Includes a pooled per-project SSH connection manager (keepalive, retry, trust-on-first-use host keys), a file-system adapter that builds the remote file tree from a single `find` exec and reads/writes via SFTP, a remote terminal and remote Claude chat (`stream-json` over SSH, reusing the local message normalizer), and an `/api/remote-projects` HTTP API with a create wizard, remote folder browser, and connection status in the sidebar. Three auth modes: private key, password (both stored encrypted at rest via AES-256-GCM, keyed by the new `ENCRYPTION_MASTER_KEY` env var), and SSH agent / default local keys (no stored credential).
+
+### Documentation
+
+* **remote-ssh:** add `docs/dev/remote-ssh-architecture.md`; document Remote SSH Projects and the `ENCRYPTION_MASTER_KEY` environment variable in the README.
+
 ## [](https://github.com/siteboon/claudecodeui/compare/v1.33.3...vnull) (2026-06-09)
 
 ### New Features

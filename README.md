@@ -58,6 +58,7 @@
 - **Interactive Chat Interface** - Built-in chat interface for seamless communication with the Agents
 - **Integrated Shell Terminal** - Direct access to the Agents CLI through built-in shell functionality
 - **File Explorer** - Interactive file tree with syntax highlighting and live editing
+- **Remote SSH Projects** - Add a project that lives on a remote host over SSH and use its files, terminal, and Claude chat just like a local one. Supports private-key, password, and SSH-agent auth; credentials are stored encrypted at rest. See the [architecture doc](docs/dev/remote-ssh-architecture.md) for details.
 - **Git Explorer** - View, stage and commit your changes. You can also switch branches 
 - **Session Management** - Resume conversations, manage multiple sessions, and track history
 - **Plugin System** - Extend CloudCLI with custom plugins — add new tabs, backend services, and integrations. [Build your own →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
@@ -151,6 +152,31 @@ To use Claude Code's full functionality, you'll need to manually enable tools:
 </div>
 
 **Recommended approach**: Start with basic tools enabled and add more as needed. You can always adjust these settings later.
+
+---
+
+## Configuration
+
+CloudCLI is configured via environment variables, typically placed in a `.env` file (run `cloudcli status` to see where it should live). See [`.env.example`](.env.example) for the full list. Notable variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SERVER_PORT` | `3001` | Backend API + WebSocket server port |
+| `VITE_PORT` | `5173` | Frontend dev server port |
+| `HOST` | `0.0.0.0` | Bind address (use `127.0.0.1` for localhost only) |
+| `CLAUDE_CLI_PATH` | `claude` | Custom path to the Claude CLI |
+| `ENCRYPTION_MASTER_KEY` | *(unset)* | Master key used to encrypt **Remote SSH Project** credentials at rest (AES-256-GCM) |
+
+### `ENCRYPTION_MASTER_KEY` (Remote SSH credentials)
+
+When you add a Remote SSH Project with key or password auth, the secret is stored encrypted at rest. The encryption key is derived from `ENCRYPTION_MASTER_KEY`. **Set this in production** — if it is unset, an ephemeral key is generated at startup and any stored remote credentials will **not** survive a restart (you would have to re-enter them). SSH-agent auth stores no credential and is unaffected.
+
+```
+# in your .env
+ENCRYPTION_MASTER_KEY=<a long random string>
+```
+
+> The other `README.*.md` translations are out of scope for this change and are not updated here.
 
 ---
 
