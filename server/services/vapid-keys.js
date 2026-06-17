@@ -1,5 +1,5 @@
 import webPush from 'web-push';
-import { getConnection } from '../modules/database/connection.js';
+import { getConnection } from '../modules/database/index.js';
 
 let cachedKeys = null;
 const db = getConnection();

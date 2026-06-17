@@ -12,7 +12,24 @@ type ProjectRow = {
   isStarred: number;
   isArchived: number;
   group_id: string | null;
+  project_type: 'local' | 'remote';
+  remote_host: string | null;
+  remote_port: number | null;
+  remote_user: string | null;
+  remote_path: string | null;
+  remote_auth_type: 'key' | 'password' | null;
+  remote_credential_ref: string | null;
 };
+
+const localRemoteDefaults = {
+  project_type: 'local',
+  remote_host: null,
+  remote_port: null,
+  remote_user: null,
+  remote_path: null,
+  remote_auth_type: null,
+  remote_credential_ref: null,
+} as const;
 
 test('toggleProjectStar throws when projectId is missing', () => {
   assert.throws(
@@ -56,6 +73,7 @@ test('toggleProjectStar flips star state and persists it', () => {
         isStarred: 0,
         isArchived: 0,
         group_id: null,
+        ...localRemoteDefaults,
       }) as ProjectRow;
     projectsDb.updateProjectIsStarredById = (projectId: string, isStarred: boolean) => {
       capturedProjectId = projectId;
@@ -89,6 +107,7 @@ test('applyLegacyStarredProjectIds stars only valid, unstarred projects', () => 
           isStarred: 0,
           isArchived: 0,
           group_id: null,
+          ...localRemoteDefaults,
         } as ProjectRow;
       }
 
@@ -100,6 +119,7 @@ test('applyLegacyStarredProjectIds stars only valid, unstarred projects', () => 
           isStarred: 1,
           isArchived: 0,
           group_id: null,
+          ...localRemoteDefaults,
         } as ProjectRow;
       }
 

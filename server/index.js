@@ -3,6 +3,7 @@
 import './load-env.js';
 import fs, { promises as fsPromises } from 'fs';
 import path from 'path';
+import pathPosix from 'path/posix';
 import os from 'os';
 import http from 'http';
 import { spawn } from 'child_process';
@@ -73,6 +74,8 @@ import userRoutes from './routes/user.js';
 import geminiRoutes from './routes/gemini.js';
 import pluginsRoutes from './routes/plugins.js';
 import providerRoutes from './modules/providers/provider.routes.js';
+import remoteProjectsRoutes from './routes/remote-projects.js';
+import { getFileSystemAdapter } from './services/file-system-adapter.service.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
@@ -205,6 +208,9 @@ app.use('/api/plugins', authenticateToken, pluginsRoutes);
 
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);
+
+// Remote (SSH) projects API Routes (protected)
+app.use('/api/remote-projects', authenticateToken, remoteProjectsRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
@@ -450,9 +456,26 @@ app.get('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(400).json({ error: 'Invalid file path' });
         }
 
+        const projectRow = projectsDb.getProjectById(projectId);
+        if (!projectRow) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        // Remote projects read over SFTP after a POSIX-prefix safety check; the
+        // local path below is left untouched.
+        if (projectRow.project_type === 'remote') {
+            const check = validateRemotePathInProject(projectRow.remote_path, filePath);
+            if (!check.valid) {
+                return res.status(403).json({ error: check.error });
+            }
+            const adapter = getFileSystemAdapter(projectId);
+            const content = await adapter.readFile(check.resolved);
+            return res.json({ content, path: check.resolved });
+        }
+
         // Resolve the absolute project root via the DB-backed helper; the
         // caller passes the DB-assigned `projectId`, not a folder name.
-        const projectRoot = await projectsDb.getProjectPathById(projectId);
+        const projectRoot = projectRow.project_path;
         if (!projectRoot) {
             return res.status(404).json({ error: 'Project not found' });
         }
@@ -554,8 +577,29 @@ app.put('/api/projects/:projectId/file', authenticateToken, async (req, res) => 
             return res.status(400).json({ error: 'Content is required' });
         }
 
+        const projectRow = projectsDb.getProjectById(projectId);
+        if (!projectRow) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        // Remote projects write over SFTP after a POSIX-prefix safety check; the
+        // local path below is left untouched.
+        if (projectRow.project_type === 'remote') {
+            const check = validateRemotePathInProject(projectRow.remote_path, filePath);
+            if (!check.valid) {
+                return res.status(403).json({ error: check.error });
+            }
+            const adapter = getFileSystemAdapter(projectId);
+            await adapter.writeFile(check.resolved, content);
+            return res.json({
+                success: true,
+                path: check.resolved,
+                message: 'File saved successfully'
+            });
+        }
+
         // Projects are now addressed by DB `projectId`, resolved to their path here.
-        const projectRoot = await projectsDb.getProjectPathById(projectId);
+        const projectRoot = projectRow.project_path;
         if (!projectRoot) {
             return res.status(404).json({ error: 'Project not found' });
         }
@@ -594,9 +638,22 @@ app.get('/api/projects/:projectId/files', authenticateToken, async (req, res) =>
 
         // Using fsPromises from import
 
+        const projectRow = projectsDb.getProjectById(req.params.projectId);
+        if (!projectRow) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        // Remote projects build the tree with a single `find` exec via the
+        // adapter (coreutils-only); local projects keep using getFileTree.
+        if (projectRow.project_type === 'remote') {
+            const adapter = getFileSystemAdapter(req.params.projectId);
+            const files = await adapter.readTree(projectRow.remote_path, 10, true);
+            return res.json(files);
+        }
+
         // Resolve the project's absolute path through the DB (projectId is the
         // primary key of the `projects` table after the identifier migration).
-        const actualPath = await projectsDb.getProjectPathById(req.params.projectId);
+        const actualPath = projectRow.project_path;
         if (!actualPath) {
             return res.status(404).json({ error: 'Project not found' });
         }
@@ -661,6 +718,43 @@ function validateFilename(name) {
         return { valid: false, error: 'Filename cannot be only dots' };
     }
     return { valid: true };
+}
+
+/**
+ * Validate that a remote (POSIX) path resolves under the project's remote root.
+ *
+ * Remote projects address files on another host, so the local path-safety
+ * checks (which assume the workspace fs) don't apply. We normalize with POSIX
+ * semantics, require the result to stay under `remoteRoot`, and reject control
+ * characters / shell metacharacters before any SFTP or exec call runs.
+ *
+ * @param {string} remoteRoot - The project's remote root path (row.remote_path).
+ * @param {string} targetPath - The requested path (absolute or root-relative).
+ * @returns {{ valid: boolean, resolved?: string, error?: string }}
+ */
+function validateRemotePathInProject(remoteRoot, targetPath) {
+    if (typeof targetPath !== 'string' || targetPath.length === 0) {
+        return { valid: false, error: 'Invalid file path' };
+    }
+    // Reject control chars (incl. newlines/NUL) and shell metacharacters. The
+    // path is single-quoted before exec, but we refuse these defensively.
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(targetPath)) {
+        return { valid: false, error: 'Path contains invalid characters' };
+    }
+    if (targetPath.includes('`') || targetPath.includes('$(') || targetPath.includes("'")) {
+        return { valid: false, error: 'Path contains invalid characters' };
+    }
+
+    const root = pathPosix.resolve('/', remoteRoot);
+    const resolved = pathPosix.isAbsolute(targetPath)
+        ? pathPosix.resolve('/', targetPath)
+        : pathPosix.resolve(root, targetPath);
+    const normalizedRoot = root.endsWith('/') ? root : root + '/';
+    if (resolved !== root && !resolved.startsWith(normalizedRoot)) {
+        return { valid: false, error: 'Path must be under project root' };
+    }
+    return { valid: true, resolved };
 }
 
 // POST /api/projects/:projectId/files/create - Create new file or directory

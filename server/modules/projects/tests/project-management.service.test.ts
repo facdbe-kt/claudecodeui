@@ -11,6 +11,13 @@ const projectRow = {
   isStarred: 0,
   isArchived: 0,
   group_id: null,
+  project_type: 'local' as const,
+  remote_host: null,
+  remote_port: null,
+  remote_user: null,
+  remote_path: null,
+  remote_auth_type: null,
+  remote_credential_ref: null,
 };
 
 test('createProject throws when project path is missing', async () => {

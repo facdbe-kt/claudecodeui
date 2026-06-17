@@ -435,6 +435,17 @@ export const runMigrations = (db: Database) => {
     const projectColumnNamesForGroups = projectsTableInfoForGroups.map((column) => column.name);
     addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForGroups, 'group_id', 'TEXT DEFAULT NULL REFERENCES project_groups(group_id) ON DELETE SET NULL');
 
+    // Remote project migration: add remote connection columns to projects
+    const projectsTableInfoForRemote = getTableInfo(db, 'projects');
+    const projectColumnNamesForRemote = projectsTableInfoForRemote.map((column) => column.name);
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'project_type', "TEXT DEFAULT 'local'");
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'remote_host', 'TEXT DEFAULT NULL');
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'remote_port', 'INTEGER DEFAULT NULL');
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'remote_user', 'TEXT DEFAULT NULL');
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'remote_path', 'TEXT DEFAULT NULL');
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'remote_auth_type', 'TEXT DEFAULT NULL');
+    addColumnToTableIfNotExists(db, 'projects', projectColumnNamesForRemote, 'remote_credential_ref', 'TEXT DEFAULT NULL');
+
     migrateLegacyWorkspaceTableIntoProjects(db);
     rebuildSessionsTableWithProjectSchema(db);
     migrateLegacySessionNames(db);
@@ -445,6 +456,7 @@ export const runMigrations = (db: Database) => {
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_is_archived ON sessions(isArchived)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_starred ON projects(isStarred)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_archived ON projects(isArchived)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_projects_type ON projects(project_type)');
 
     db.exec('DROP INDEX IF EXISTS idx_session_names_lookup');
     db.exec('DROP INDEX IF EXISTS idx_sessions_workspace_path');

@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS projects (
     isStarred BOOLEAN DEFAULT 0,
     isArchived BOOLEAN DEFAULT 0,
     group_id TEXT DEFAULT NULL,
+    project_type TEXT DEFAULT 'local',
+    remote_host TEXT DEFAULT NULL,
+    remote_port INTEGER DEFAULT NULL,
+    remote_user TEXT DEFAULT NULL,
+    remote_path TEXT DEFAULT NULL,
+    remote_auth_type TEXT DEFAULT NULL,
+    remote_credential_ref TEXT DEFAULT NULL,
     FOREIGN KEY (group_id) REFERENCES project_groups(group_id) ON DELETE SET NULL
 );
 `;

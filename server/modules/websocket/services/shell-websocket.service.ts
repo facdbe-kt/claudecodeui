@@ -3,8 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import pty, { type IPty } from 'node-pty';
+import type { ClientChannel } from 'ssh2';
 import { WebSocket, type RawData } from 'ws';
 
+import { projectsDb } from '@/modules/database/index.js';
+import { sshConnectionManager } from '@/services/ssh-connection-manager.service.js';
+import { rowToRemoteConfig } from '@/shared/remote-project.js';
+import type { ProjectRepositoryRow } from '@/shared/types.js';
 import { parseIncomingJsonObject } from '@/shared/utils.js';
 
 type ShellIncomingMessage = {
@@ -13,6 +18,7 @@ type ShellIncomingMessage = {
   cols?: number;
   rows?: number;
   projectPath?: string;
+  projectId?: string;
   sessionId?: string;
   hasSession?: boolean;
   provider?: string;
@@ -31,7 +37,27 @@ type PtySessionEntry = {
   sessionId: string | null;
 };
 
+/**
+ * Reconnect/buffer state for a remote SSH shell channel.
+ *
+ * Kept in a map parallel to `ptySessionsMap` (rather than widening that entry
+ * with a discriminant) so the local node-pty reconnection path stays entirely
+ * untouched and the two channel types never need narrowing in the hot loops.
+ * The underlying ssh2 transport is pooled separately by `sshConnectionManager`
+ * (keyed by projectId); this entry only owns the interactive shell channel.
+ */
+type RemoteShellSessionEntry = {
+  channel: ClientChannel;
+  ws: WebSocket | null;
+  buffer: string[];
+  timeoutId: NodeJS.Timeout | null;
+  projectPath: string;
+  sessionId: string | null;
+  projectId: string;
+};
+
 const ptySessionsMap = new Map<string, PtySessionEntry>();
+const remoteShellSessionsMap = new Map<string, RemoteShellSessionEntry>();
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000;
 const SHELL_URL_PARSE_BUFFER_LIMIT = 32768;
 
@@ -158,6 +184,278 @@ function buildShellCommand(
 }
 
 /**
+ * Mutable per-connection state shared by the local and remote output pipelines.
+ *
+ * Holds the rolling clean-text window used for auth-URL detection and the set
+ * of URLs already announced, so both pipelines emit identical `output` and
+ * `auth_url` frames to the frontend.
+ */
+type ShellOutputContext = {
+  urlDetectionBuffer: string;
+  announcedAuthUrls: Set<string>;
+  dependencies: ShellWebSocketDependencies;
+};
+
+/**
+ * Emits the `output` (and any `auth_url`) frames for a single chunk of shell
+ * output to `targetWs`, mirroring the exact frame shapes the frontend expects.
+ *
+ * Shared by the local node-pty path and the remote SSH-channel path so URL
+ * detection and frame formatting stay in one place. Mutates
+ * `context.urlDetectionBuffer`/`announcedAuthUrls` in place.
+ */
+function emitShellOutputChunk(
+  chunk: string,
+  targetWs: WebSocket,
+  context: ShellOutputContext
+): void {
+  if (targetWs.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  const { dependencies } = context;
+  let outputData = chunk;
+  const cleanChunk = dependencies.stripAnsiSequences(chunk);
+  context.urlDetectionBuffer =
+    `${context.urlDetectionBuffer}${cleanChunk}`.slice(-SHELL_URL_PARSE_BUFFER_LIMIT);
+
+  outputData = outputData.replace(
+    /OPEN_URL:\s*(https?:\/\/[^\s\x1b\x07]+)/g,
+    '[INFO] Opening in browser: $1'
+  );
+
+  const emitAuthUrl = (detectedUrl: string, autoOpen = false) => {
+    const normalizedUrl = dependencies.normalizeDetectedUrl(detectedUrl);
+    if (!normalizedUrl) {
+      return;
+    }
+
+    const isNewUrl = !context.announcedAuthUrls.has(normalizedUrl);
+    if (isNewUrl) {
+      context.announcedAuthUrls.add(normalizedUrl);
+      targetWs.send(
+        JSON.stringify({
+          type: 'auth_url',
+          url: normalizedUrl,
+          autoOpen,
+        })
+      );
+    }
+  };
+
+  const normalizedDetectedUrls = dependencies
+    .extractUrlsFromText(context.urlDetectionBuffer)
+    .map((url) => dependencies.normalizeDetectedUrl(url))
+    .filter((url): url is string => Boolean(url));
+
+  const dedupedDetectedUrls = Array.from(new Set(normalizedDetectedUrls)).filter(
+    (url, _, urls) => !urls.some((otherUrl) => otherUrl !== url && otherUrl.startsWith(url))
+  );
+
+  dedupedDetectedUrls.forEach((url) => emitAuthUrl(url, false));
+
+  if (dependencies.shouldAutoOpenUrlFromOutput(cleanChunk) && dedupedDetectedUrls.length > 0) {
+    const bestUrl = dedupedDetectedUrls.reduce((longest, current) =>
+      current.length > longest.length ? current : longest
+    );
+    emitAuthUrl(bestUrl, true);
+  }
+
+  targetWs.send(
+    JSON.stringify({
+      type: 'output',
+      data: outputData,
+    })
+  );
+}
+
+/**
+ * Rejects paths containing characters that could break out of a single-quoted
+ * shell argument (newlines, control chars, backticks, `$()`), then single-quotes
+ * the value for safe interpolation into a remote `cd` command.
+ *
+ * Single-quoting neutralizes every shell metacharacter except `'` itself, which
+ * we escape with the standard `'\''` close/escape/reopen idiom.
+ */
+function quoteRemotePathForShell(remotePath: string): string {
+  // Reject control chars (incl. newline/CR/tab), backticks, and `$(`; the
+  // single-quote wrapper below neutralizes every other shell metacharacter.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f`]/.test(remotePath) || remotePath.includes('$(')) {
+    throw new Error('Invalid remote project path');
+  }
+  return `'${remotePath.replace(/'/g, `'\\''`)}'`;
+}
+
+type StartRemoteShellArgs = {
+  ws: WebSocket;
+  data: ShellIncomingMessage;
+  projectId: string;
+  projectRow: ProjectRepositoryRow;
+  outputContext: ShellOutputContext;
+  attach: (channel: ClientChannel, sessionKey: string) => void;
+};
+
+/**
+ * Establishes (or re-attaches to) an interactive SSH shell channel for a remote
+ * project and bridges it to the websocket using the same frame shapes as the
+ * local node-pty path, so the frontend needs no changes.
+ *
+ * Reconnect state lives in `remoteShellSessionsMap` (parallel to
+ * `ptySessionsMap`); the underlying transport is pooled by
+ * `sshConnectionManager`. On any connect/open failure we surface a red error
+ * frame (the same shape the local path's outer catch emits) and close the
+ * socket.
+ */
+async function startRemoteShell(args: StartRemoteShellArgs): Promise<void> {
+  const { ws, data, projectId, projectRow, outputContext, attach } = args;
+
+  const remotePath = projectRow.remote_path ?? '';
+  const sessionId = readString(data.sessionId) || null;
+  const initialCommand = readString(data.initialCommand);
+  const forceRestart = readBoolean(data.forceRestart);
+  const cols = readNumber(data.cols, 80);
+  const rows = readNumber(data.rows, 24);
+
+  const safeSessionIdPattern = /^[a-zA-Z0-9_.\-:]+$/;
+  if (sessionId && !safeSessionIdPattern.test(sessionId)) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid session ID' }));
+    return;
+  }
+
+  const remoteSessionKey = `remote_${projectId}_${sessionId ?? 'default'}`;
+
+  // Fast-path reconnect: re-attach to a live channel, replay its buffer, and
+  // resize it to the reconnecting client (mirrors the local reconnect path).
+  if (!forceRestart) {
+    const existing = remoteShellSessionsMap.get(remoteSessionKey);
+    if (existing) {
+      if (existing.timeoutId) {
+        clearTimeout(existing.timeoutId);
+        existing.timeoutId = null;
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: 'output',
+          data: '\x1b[36m[Reconnected to existing session]\x1b[0m\r\n',
+        })
+      );
+
+      existing.buffer.forEach((bufferedData) => {
+        ws.send(JSON.stringify({ type: 'output', data: bufferedData }));
+      });
+
+      existing.ws = ws;
+      attach(existing.channel, remoteSessionKey);
+      existing.channel.setWindow(rows, cols, 0, 0);
+      return;
+    }
+  }
+
+  // Validate/quote the remote cwd before we touch the network so a bad path
+  // never reaches the channel.
+  const quotedRemotePath = remotePath ? quoteRemotePathForShell(remotePath) : '';
+
+  let channel: ClientChannel;
+  try {
+    const config = rowToRemoteConfig(projectRow);
+    const connection = await sshConnectionManager.connect(projectId, config);
+    channel = await new Promise<ClientChannel>((resolve, reject) => {
+      connection.client.shell({ cols, rows, term: 'xterm-256color' }, (err, ch) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(ch);
+      });
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: 'output',
+          data: `\r\n\x1b[31mError: ${message}\x1b[0m\r\n`,
+        })
+      );
+    }
+    try {
+      ws.close();
+    } catch {
+      /* already closing */
+    }
+    return;
+  }
+
+  const entry: RemoteShellSessionEntry = {
+    channel,
+    ws,
+    buffer: [],
+    timeoutId: null,
+    projectPath: remotePath,
+    sessionId,
+    projectId,
+  };
+  remoteShellSessionsMap.set(remoteSessionKey, entry);
+  attach(channel, remoteSessionKey);
+
+  const handleChannelChunk = (chunk: Buffer | string) => {
+    const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+
+    if (entry.buffer.length < 5000) {
+      entry.buffer.push(text);
+    } else {
+      entry.buffer.shift();
+      entry.buffer.push(text);
+    }
+
+    if (entry.ws) {
+      emitShellOutputChunk(text, entry.ws, outputContext);
+    }
+  };
+
+  channel.on('data', handleChannelChunk);
+  // Remote stderr is part of the interactive stream the user expects to see.
+  channel.stderr.on('data', handleChannelChunk);
+
+  channel.on('close', () => {
+    if (remoteShellSessionsMap.get(remoteSessionKey) !== entry) {
+      return;
+    }
+    if (entry.timeoutId) {
+      clearTimeout(entry.timeoutId);
+    }
+    if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+      entry.ws.send(
+        JSON.stringify({
+          type: 'output',
+          data: '\r\n\x1b[33mRemote shell closed\x1b[0m\r\n',
+        })
+      );
+    }
+    remoteShellSessionsMap.delete(remoteSessionKey);
+  });
+
+  // Emit the banner first so it leads the session, matching the local path.
+  const welcomeMsg = `\x1b[36mStarting remote terminal in: ${remotePath || '~'}\x1b[0m\r\n`;
+  ws.send(JSON.stringify({ type: 'output', data: welcomeMsg }));
+
+  // Start in the project directory by writing `cd` into the channel rather than
+  // relying on a one-shot `exec`: an interactive `shell()` ignores a separate
+  // exec's cwd, and writing the command keeps the user's live session (history,
+  // prompt, subsequent input) anchored in the project path.
+  if (quotedRemotePath) {
+    channel.write(`cd ${quotedRemotePath}\n`);
+  }
+
+  // Same UX as local: run the requested command once the shell is ready.
+  if (initialCommand) {
+    channel.write(`${initialCommand}\n`);
+  }
+}
+
+/**
  * Handles websocket connections used by the standalone shell terminal UI.
  */
 export function handleShellConnection(
@@ -168,8 +466,13 @@ export function handleShellConnection(
 
   let shellProcess: IPty | null = null;
   let ptySessionKey: string | null = null;
-  let urlDetectionBuffer = '';
-  const announcedAuthUrls = new Set<string>();
+  let remoteChannel: ClientChannel | null = null;
+  let remoteSessionKey: string | null = null;
+  const outputContext: ShellOutputContext = {
+    urlDetectionBuffer: '',
+    announcedAuthUrls: new Set<string>(),
+    dependencies,
+  };
 
   ws.on('message', async (rawMessage) => {
     try {
@@ -190,8 +493,30 @@ export function handleShellConnection(
           (!!initialCommand && !hasSession) ||
           provider === 'plain-shell';
 
-        urlDetectionBuffer = '';
-        announcedAuthUrls.clear();
+        outputContext.urlDetectionBuffer = '';
+        outputContext.announcedAuthUrls.clear();
+
+        // Remote projects drive an interactive SSH channel instead of a local
+        // node-pty. We branch here only when the project row is explicitly
+        // remote; every local project keeps the exact code path below.
+        const projectId = readString(data.projectId) || null;
+        if (projectId) {
+          const projectRow = projectsDb.getProjectById(projectId);
+          if (projectRow?.project_type === 'remote') {
+            await startRemoteShell({
+              ws,
+              data,
+              projectId,
+              projectRow,
+              outputContext,
+              attach: (channel, key) => {
+                remoteChannel = channel;
+                remoteSessionKey = key;
+              },
+            });
+            return;
+          }
+        }
 
         const isLoginCommand =
           !!initialCommand &&
@@ -324,62 +649,8 @@ export function handleShellConnection(
             session.buffer.push(chunk);
           }
 
-          if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-            let outputData = chunk;
-            const cleanChunk = dependencies.stripAnsiSequences(chunk);
-            urlDetectionBuffer = `${urlDetectionBuffer}${cleanChunk}`.slice(-SHELL_URL_PARSE_BUFFER_LIMIT);
-
-            outputData = outputData.replace(
-              /OPEN_URL:\s*(https?:\/\/[^\s\x1b\x07]+)/g,
-              '[INFO] Opening in browser: $1'
-            );
-
-            const emitAuthUrl = (detectedUrl: string, autoOpen = false) => {
-              const normalizedUrl = dependencies.normalizeDetectedUrl(detectedUrl);
-              if (!normalizedUrl) {
-                return;
-              }
-
-              const isNewUrl = !announcedAuthUrls.has(normalizedUrl);
-              if (isNewUrl) {
-                announcedAuthUrls.add(normalizedUrl);
-                session.ws?.send(
-                  JSON.stringify({
-                    type: 'auth_url',
-                    url: normalizedUrl,
-                    autoOpen,
-                  })
-                );
-              }
-            };
-
-            const normalizedDetectedUrls = dependencies.extractUrlsFromText(urlDetectionBuffer)
-              .map((url) => dependencies.normalizeDetectedUrl(url))
-              .filter((url): url is string => Boolean(url));
-
-            const dedupedDetectedUrls = Array.from(new Set(normalizedDetectedUrls)).filter(
-              (url, _, urls) =>
-                !urls.some((otherUrl) => otherUrl !== url && otherUrl.startsWith(url))
-            );
-
-            dedupedDetectedUrls.forEach((url) => emitAuthUrl(url, false));
-
-            if (
-              dependencies.shouldAutoOpenUrlFromOutput(cleanChunk) &&
-              dedupedDetectedUrls.length > 0
-            ) {
-              const bestUrl = dedupedDetectedUrls.reduce((longest, current) =>
-                current.length > longest.length ? current : longest
-              );
-              emitAuthUrl(bestUrl, true);
-            }
-
-            session.ws.send(
-              JSON.stringify({
-                type: 'output',
-                data: outputData,
-              })
-            );
+          if (session.ws) {
+            emitShellOutputChunk(chunk, session.ws, outputContext);
           }
         });
 
@@ -439,15 +710,23 @@ export function handleShellConnection(
       }
 
       if (data.type === 'input') {
-        if (shellProcess) {
+        if (remoteChannel) {
+          remoteChannel.write(readString(data.data));
+        } else if (shellProcess) {
           shellProcess.write(readString(data.data));
         }
         return;
       }
 
       if (data.type === 'resize') {
-        if (shellProcess) {
-          shellProcess.resize(readNumber(data.cols, 80), readNumber(data.rows, 24));
+        const cols = readNumber(data.cols, 80);
+        const rows = readNumber(data.rows, 24);
+        if (remoteChannel) {
+          // ssh2 takes (rows, cols, height, width); height/width are pixel
+          // hints only and 0 lets the remote infer them from rows/cols.
+          remoteChannel.setWindow(rows, cols, 0, 0);
+        } else if (shellProcess) {
+          shellProcess.resize(cols, rows);
         }
       }
     } catch (error) {
@@ -465,6 +744,27 @@ export function handleShellConnection(
   });
 
   ws.on('close', () => {
+    // Detach the remote SSH channel on disconnect, mirroring the local node-pty
+    // grace period so a reconnecting client can re-attach to the live channel.
+    if (remoteSessionKey) {
+      const remoteSession = remoteShellSessionsMap.get(remoteSessionKey);
+      if (remoteSession) {
+        remoteSession.ws = null;
+        remoteSession.timeoutId = setTimeout(() => {
+          if (remoteShellSessionsMap.get(remoteSessionKey as string) !== remoteSession) {
+            return;
+          }
+
+          try {
+            remoteSession.channel.end();
+          } catch {
+            /* channel already gone */
+          }
+          remoteShellSessionsMap.delete(remoteSessionKey as string);
+        }, PTY_SESSION_TIMEOUT);
+      }
+    }
+
     if (!ptySessionKey) {
       return;
     }

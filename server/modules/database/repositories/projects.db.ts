@@ -1,9 +1,33 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { getConnection } from '@/modules/database/connection.js';
-import type { CreateProjectPathResult, ProjectRepositoryRow } from '@/shared/types.js';
+import type {
+    CreateProjectPathResult,
+    ProjectRepositoryRow,
+    RemoteAuthType,
+} from '@/shared/types.js';
 import { normalizeProjectPath } from '@/shared/utils.js';
+
+/**
+ * Input payload for inserting a remote (SSH) project row.
+ *
+ * `credentialRef` references the stored `user_credentials` id holding the
+ * decryptable secret; the secret itself is never stored on the project row.
+ */
+export type CreateRemoteProjectInput = {
+    customProjectName: string | null;
+    host: string;
+    port: number;
+    user: string;
+    remotePath: string;
+    authType: RemoteAuthType;
+    credentialRef: string;
+};
+
+const REMOTE_PROJECT_COLUMNS =
+    'project_id, project_path, custom_project_name, isStarred, isArchived, group_id, ' +
+    'project_type, remote_host, remote_port, remote_user, remote_path, remote_auth_type, remote_credential_ref';
 
 function normalizeProjectDisplayName(projectPath: string, customProjectName: string | null): string {
     const trimmedCustomName = typeof customProjectName === 'string' ? customProjectName.trim() : '';
@@ -59,12 +83,93 @@ export const projectsDb = {
     getProjectById(projectId: string): ProjectRepositoryRow | null {
         const db = getConnection();
         const row = db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, group_id
+            SELECT ${REMOTE_PROJECT_COLUMNS}
             FROM projects
             WHERE project_id = ?
         `).get(projectId) as ProjectRepositoryRow | undefined;
 
         return row ?? null;
+    },
+
+    /**
+     * Inserts a new `project_type = 'remote'` row and returns it.
+     *
+     * The synthetic `project_path` (`ssh://user@host:port/remotePath`) keeps the
+     * UNIQUE path constraint meaningful for remote workspaces, and the project id
+     * is derived deterministically from that key so the same remote target maps
+     * to a stable id. Throws on a UNIQUE conflict (duplicate remote project).
+     */
+    createRemoteProject(input: CreateRemoteProjectInput): ProjectRepositoryRow {
+        const db = getConnection();
+        const syntheticPath = `ssh://${input.user}@${input.host}:${input.port}${
+            input.remotePath.startsWith('/') ? input.remotePath : `/${input.remotePath}`
+        }`;
+        const projectId = createHash('sha256').update(syntheticPath).digest('hex').slice(0, 32);
+        const displayName = normalizeProjectDisplayName(input.remotePath, input.customProjectName);
+
+        const row = db.prepare(`
+            INSERT INTO projects (
+                project_id, project_path, custom_project_name, isArchived,
+                project_type, remote_host, remote_port, remote_user, remote_path,
+                remote_auth_type, remote_credential_ref
+            )
+            VALUES (?, ?, ?, 0, 'remote', ?, ?, ?, ?, ?, ?)
+            RETURNING ${REMOTE_PROJECT_COLUMNS}
+        `).get(
+            projectId,
+            syntheticPath,
+            displayName,
+            input.host,
+            input.port,
+            input.user,
+            input.remotePath,
+            input.authType,
+            input.credentialRef
+        ) as ProjectRepositoryRow;
+
+        return row;
+    },
+
+    /**
+     * Updates the `remote_*` connection columns for an existing remote project
+     * row and returns the refreshed row (or null when no row matched / the row is
+     * not remote).
+     */
+    updateRemoteProject(
+        projectId: string,
+        fields: { host: string; port: number; user: string; remotePath: string }
+    ): ProjectRepositoryRow | null {
+        const db = getConnection();
+        const row = db.prepare(`
+            UPDATE projects
+            SET remote_host = ?, remote_port = ?, remote_user = ?, remote_path = ?
+            WHERE project_id = ? AND project_type = 'remote'
+            RETURNING ${REMOTE_PROJECT_COLUMNS}
+        `).get(
+            fields.host,
+            fields.port,
+            fields.user,
+            fields.remotePath,
+            projectId
+        ) as ProjectRepositoryRow | undefined;
+
+        return row ?? null;
+    },
+
+    /**
+     * Counts how many project rows reference the given credential id. Used before
+     * deleting a credential so a shared credential is not removed while another
+     * remote project still depends on it.
+     */
+    countProjectsByCredentialRef(credentialRef: string): number {
+        const db = getConnection();
+        const row = db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM projects
+            WHERE remote_credential_ref = ?
+        `).get(credentialRef) as { count: number };
+
+        return row.count;
     },
 
     /**

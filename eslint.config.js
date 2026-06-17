@@ -161,7 +161,13 @@ export default tseslint.config(
             "server/shared/utils.{js,ts}",
             "server/shared/frontmatter.ts",
             "server/shared/claude-cli-path.ts",
+            "server/shared/remote-project.{js,ts}",
           ], // classify shared utility files so modules can depend on them explicitly
+          mode: "file",
+        },
+        {
+          type: "backend-service", // cross-cutting backend services (SSH, encryption, filesystem adapter, notifications) that modules and routes may depend on directly
+          pattern: "server/services/*.{js,ts}", // each file under server/services is a standalone service element
           mode: "file",
         },
         {

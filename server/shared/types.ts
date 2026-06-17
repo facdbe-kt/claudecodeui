@@ -440,13 +440,69 @@ export type CreateCredentialResult = {
   credentialType: string;
 };
 
+/**
+ * Non-secret metadata describing a stored remote credential.
+ *
+ * Returned by accessors that must never expose the plaintext secret. `hasValue`
+ * signals that an (encrypted) value is stored without revealing it.
+ */
+export type RemoteCredentialMeta = {
+  id: number;
+  name: string;
+  type: string;
+  description: string | null;
+  hasValue: boolean;
+};
+
+/**
+ * A decrypted remote credential, for server-internal use only (e.g. the SSH
+ * manager). The `value` field carries the plaintext secret and must never be
+ * sent to a client.
+ */
+export type RemoteCredentialWithValue = RemoteCredentialMeta & {
+  value: string;
+};
+
 // ---------------------------
 //----------------- PROJECT PERSISTENCE TYPES ------------
+/**
+ * Origin of a project's filesystem.
+ *
+ * `local` projects live on the host running the backend (the default for all
+ * existing projects). `remote` projects are accessed over SSH using the
+ * `remote_*` connection columns on the project row.
+ */
+export type ProjectType = 'local' | 'remote';
+
+/**
+ * Authentication mechanism used when connecting to a remote project host.
+ */
+export type RemoteAuthType = 'key' | 'password';
+
+/**
+ * Normalized remote SSH connection config derived from a project's `remote_*`
+ * row columns.
+ *
+ * `credentialRef` references a stored credential id (see `user_credentials`)
+ * holding the private key or password rather than embedding the secret here.
+ */
+export type RemoteProjectConfig = {
+  host: string;
+  port: number;
+  user: string;
+  path: string;
+  authType: RemoteAuthType;
+  credentialRef: string;
+};
+
 /**
  * Canonical project row shape returned by the projects repository.
  *
  * Use this type whenever backend services need to pass around one database
  * project record without leaking raw SQL row typing across modules.
+ *
+ * The `remote_*` columns are populated only for `project_type = 'remote'` rows
+ * and are `null` for local projects.
  */
 export type ProjectRepositoryRow = {
   project_id: string;
@@ -455,6 +511,13 @@ export type ProjectRepositoryRow = {
   isStarred: number;
   isArchived: number;
   group_id: string | null;
+  project_type: ProjectType;
+  remote_host: string | null;
+  remote_port: number | null;
+  remote_user: string | null;
+  remote_path: string | null;
+  remote_auth_type: RemoteAuthType | null;
+  remote_credential_ref: string | null;
 };
 
 /**
