@@ -30,6 +30,11 @@ import {
     reconnectSessionWriter,
 } from './claude-sdk.js';
 import {
+    queryClaudeRemote,
+    abortClaudeRemoteSession,
+    isClaudeRemoteSessionActive,
+} from './services/remote-claude.service.js';
+import {
     spawnCursor,
     abortCursorSession,
     isCursorSessionActive,
@@ -110,6 +115,9 @@ const wss = createWebSocketServer(server, {
     },
     chat: {
         queryClaudeSDK,
+        queryClaudeRemote,
+        abortClaudeRemoteSession,
+        isClaudeRemoteSessionActive,
         spawnCursor,
         queryCodex,
         spawnGemini,

@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 
 import { connectedClients } from '@/modules/websocket/services/websocket-state.service.js';
 import { WebSocketWriter } from '@/modules/websocket/services/websocket-writer.service.js';
+import { projectsDb } from '@/modules/database/index.js';
 import type {
   AnyRecord,
   AuthenticatedWebSocketRequest,
@@ -26,6 +27,9 @@ const DEFAULT_PROVIDER: LLMProvider = 'claude';
 
 type ChatWebSocketDependencies = {
   queryClaudeSDK: (command: string, options: unknown, writer: WebSocketWriter) => Promise<unknown>;
+  queryClaudeRemote: (command: string, options: unknown, writer: WebSocketWriter) => Promise<unknown>;
+  abortClaudeRemoteSession: (sessionId: string) => Promise<boolean>;
+  isClaudeRemoteSessionActive: (sessionId: string) => boolean;
   spawnCursor: (command: string, options: unknown, writer: WebSocketWriter) => Promise<unknown>;
   queryCodex: (command: string, options: unknown, writer: WebSocketWriter) => Promise<unknown>;
   spawnGemini: (command: string, options: unknown, writer: WebSocketWriter) => Promise<unknown>;
@@ -67,6 +71,26 @@ function readProvider(value: unknown): LLMProvider {
   }
 
   return DEFAULT_PROVIDER;
+}
+
+/**
+ * Resolves whether a claude-command targets a remote project. The client now
+ * sends `options.projectId`; if it maps to a `project_type === 'remote'` row the
+ * chat must run Claude over SSH on the remote host instead of in-process.
+ * Local projects (no projectId, missing row, or non-remote type) return false
+ * so the existing SDK path runs completely unchanged.
+ */
+function isRemoteProject(options: AnyRecord | undefined): boolean {
+  const projectId = options?.projectId;
+  if (typeof projectId !== 'string' || projectId.length === 0) {
+    return false;
+  }
+  try {
+    const row = projectsDb.getProjectById(projectId);
+    return row?.project_type === 'remote';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -119,7 +143,11 @@ export function handleChatConnection(
       }
 
       if (messageType === 'claude-command') {
-        await dependencies.queryClaudeSDK(data.command ?? '', data.options, writer);
+        if (isRemoteProject(data.options)) {
+          await dependencies.queryClaudeRemote(data.command ?? '', data.options, writer);
+        } else {
+          await dependencies.queryClaudeSDK(data.command ?? '', data.options, writer);
+        }
         return;
       }
 
@@ -170,7 +198,13 @@ export function handleChatConnection(
         } else if (provider === 'opencode') {
           success = dependencies.abortOpenCodeSession(sessionId);
         } else {
-          success = await dependencies.abortClaudeSDKSession(sessionId);
+          // Remote claude sessions are tracked separately; try them first and
+          // fall back to the in-process SDK abort for local sessions.
+          if (dependencies.isClaudeRemoteSessionActive(sessionId)) {
+            success = await dependencies.abortClaudeRemoteSession(sessionId);
+          } else {
+            success = await dependencies.abortClaudeSDKSession(sessionId);
+          }
         }
 
         writer.send(
@@ -228,9 +262,15 @@ export function handleChatConnection(
         } else if (provider === 'opencode') {
           isActive = dependencies.isOpenCodeSessionActive(sessionId);
         } else {
-          isActive = dependencies.isClaudeSDKSessionActive(sessionId);
-          if (isActive) {
-            dependencies.reconnectSessionWriter(sessionId, ws);
+          // A remote claude run streams over SSH (no reconnectable in-process
+          // writer); report it active so the UI shows the processing state.
+          if (dependencies.isClaudeRemoteSessionActive(sessionId)) {
+            isActive = true;
+          } else {
+            isActive = dependencies.isClaudeSDKSessionActive(sessionId);
+            if (isActive) {
+              dependencies.reconnectSessionWriter(sessionId, ws);
+            }
           }
         }
 

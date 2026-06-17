@@ -70,6 +70,31 @@ export type SSHExecResult = {
   code: number;
 };
 
+/**
+ * Event handlers for a streaming remote command ({@link SSHConnectionManager.execStream}).
+ * `onStdoutLine`/`onStderrLine` are invoked once per complete line (newline
+ * stripped); `onClose` fires exactly once when the channel closes with the
+ * remote exit code (or null if the channel was killed/aborted).
+ */
+export type SSHStreamHandlers = {
+  onStdoutLine?: (line: string) => void;
+  onStderrLine?: (line: string) => void;
+  onError?: (error: Error) => void;
+  onClose?: (code: number | null) => void;
+};
+
+/**
+ * Handle returned by {@link SSHConnectionManager.execStream}. `write` pushes
+ * bytes to the remote process stdin (e.g. the user prompt for `claude -p`);
+ * `end` closes stdin; `kill` tears the channel down (SIGINT first, then a hard
+ * channel close) so an aborted chat turn stops the remote process.
+ */
+export type SSHStreamHandle = {
+  write: (data: string) => void;
+  end: () => void;
+  kill: () => void;
+};
+
 /** Result of a non-throwing connection probe. */
 export type SSHTestResult = {
   ok: boolean;
@@ -326,6 +351,123 @@ class SSHConnectionManager extends EventEmitter {
         });
         channel.on('error', (e: Error) => {
           reject(new Error(classifyError(e).message));
+        });
+      });
+    });
+  }
+
+  /**
+   * Runs a command over the pooled connection (opening one lazily if needed) and
+   * STREAMS its output line-by-line instead of buffering. Unlike `execCommand`
+   * this returns a handle so the caller can write to the remote stdin, and tear
+   * the channel down on abort. stdout and stderr are buffered separately and
+   * split on newlines so partial chunks are never delivered mid-line; callers
+   * parse stdout only (the remote `bash -ic` prints harmless job-control noise to
+   * stderr).
+   *
+   * The returned promise resolves after `connect()` succeeds and the channel is
+   * open; per-line/close events are delivered through `handlers`.
+   */
+  async execStream(
+    projectId: string,
+    cmd: string,
+    handlers: SSHStreamHandlers,
+    config?: RemoteProjectConfig
+  ): Promise<SSHStreamHandle> {
+    let connection = this.getConnection(projectId);
+    if (!connection) {
+      if (!config) {
+        throw new Error(
+          `No live SSH connection for project ${projectId}; pass a config to connect.`
+        );
+      }
+      connection = await this.connect(projectId, config);
+    }
+
+    this.touch(projectId);
+
+    return new Promise<SSHStreamHandle>((resolve, reject) => {
+      connection!.client.exec(cmd, (err, channel) => {
+        if (err) {
+          reject(new Error(classifyError(err).message));
+          return;
+        }
+
+        let stdoutBuffer = '';
+        let stderrBuffer = '';
+        let closed = false;
+        let exitCode: number | null = null;
+
+        const flushLines = (
+          buffer: string,
+          emit?: (line: string) => void
+        ): string => {
+          let idx = buffer.indexOf('\n');
+          while (idx !== -1) {
+            const line = buffer.slice(0, idx).replace(/\r$/, '');
+            buffer = buffer.slice(idx + 1);
+            if (emit) emit(line);
+            idx = buffer.indexOf('\n');
+          }
+          return buffer;
+        };
+
+        channel.on('data', (chunk: Buffer) => {
+          stdoutBuffer += chunk.toString('utf8');
+          stdoutBuffer = flushLines(stdoutBuffer, handlers.onStdoutLine);
+        });
+        channel.stderr.on('data', (chunk: Buffer) => {
+          stderrBuffer += chunk.toString('utf8');
+          stderrBuffer = flushLines(stderrBuffer, handlers.onStderrLine);
+        });
+        channel.on('exit', (code: number | null) => {
+          exitCode = code;
+        });
+        channel.on('close', () => {
+          if (closed) return;
+          closed = true;
+          // Flush any trailing partial line (no terminating newline).
+          if (stdoutBuffer.length > 0 && handlers.onStdoutLine) {
+            handlers.onStdoutLine(stdoutBuffer.replace(/\r$/, ''));
+          }
+          if (stderrBuffer.length > 0 && handlers.onStderrLine) {
+            handlers.onStderrLine(stderrBuffer.replace(/\r$/, ''));
+          }
+          this.touch(projectId);
+          handlers.onClose?.(exitCode);
+        });
+        channel.on('error', (e: Error) => {
+          handlers.onError?.(new Error(classifyError(e).message));
+        });
+
+        resolve({
+          write: (data: string) => {
+            try {
+              channel.write(data);
+            } catch {
+              /* channel may already be closed */
+            }
+          },
+          end: () => {
+            try {
+              channel.end();
+            } catch {
+              /* ignore */
+            }
+          },
+          kill: () => {
+            try {
+              // Best-effort interrupt, then force the channel closed.
+              channel.signal('INT');
+            } catch {
+              /* signal may be unsupported by the remote sshd */
+            }
+            try {
+              channel.close();
+            } catch {
+              /* ignore */
+            }
+          },
         });
       });
     });

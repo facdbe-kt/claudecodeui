@@ -738,6 +738,7 @@ export function useChatComposerState({
           type: 'claude-command',
           command: messageContent,
           options: {
+            projectId: selectedProject.projectId,
             projectPath: resolvedProjectPath,
             cwd: resolvedProjectPath,
             sessionId: effectiveSessionId,
